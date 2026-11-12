@@ -2,7 +2,7 @@
 
 # bj-air-quality-forecast
 
-**Multi-site PM2.5 short-term forecasting for Beijing — h = 1 / 3 / 6 hours**
+**北京多站点 PM2.5 短时预测 — h = 1 / 3 / 6 小时**
 
 ![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)
 ![LightGBM](https://img.shields.io/badge/LightGBM-4.7.0-025E8C)
@@ -11,354 +11,337 @@
 ![Data](https://img.shields.io/badge/data-20.4M%20rows-2f6fed)
 ![Status](https://img.shields.io/badge/status-research%20prototype-e8a33d)
 
-Airtight evaluation protocol · 20.4 M rows of real observations · measured against persistence, not against a straw man
+冻结的评价协议 · 2042 万行真实观测 · 对手是持久性基线，不是稻草人
 
-[English](README.md) · [中文](README.zh-CN.md) · [Results](#6-results) · [Data](#3-data) · [Protocol](#4-evaluation-protocol-p1) · [Reproduce](#9-quickstart)
+[中文](README.md) · [English](README.en.md) · [实验结果](#6-实验结果) · [数据](#3-数据) · [协议](#4-评价协议-p1) · [复现](#9-快速开始)
 
 </div>
 
-![Headline results](docs/figures/fig1_main_results.png)
+![主结果](docs/figures/fig1_main_results.png)
 
-> **In one line.** Hourly PM2.5 at 35 Beijing stations, issued at the top of an hour using only
-> observations up to `T-1`, predicting one target hour at `h = 1 / 3 / 6`. LightGBM v4 cuts MAE by
-> **13.21% / 19.66% / 25.91%** against a persistence baseline on a **pre-frozen, fingerprinted sample
-> set** — with daily-block bootstrap confidence intervals that exclude zero by a wide margin.
-
----
-
-## Table of contents
-
-- [1. What this project is](#1-what-this-project-is)
-- [2. Why it is not a toy](#2-why-it-is-not-a-toy)
-- [3. Data](#3-data)
-  - [3.1 Sources and coverage](#31-sources-and-coverage)
-  - [3.2 Warehouse schema](#32-warehouse-schema)
-  - [3.3 What the data actually looks like](#33-what-the-data-actually-looks-like)
-  - [3.4 Nine traps that were actually hit](#34-nine-traps-that-were-actually-hit)
-  - [3.5 Station metadata](#35-station-metadata)
-- [4. Evaluation protocol p1](#4-evaluation-protocol-p1)
-  - [4.1 Time contract](#41-time-contract)
-  - [4.2 Splits](#42-splits)
-  - [4.3 The frozen index](#43-the-frozen-index)
-  - [4.4 Baselines, and why B2 is useless](#44-baselines-and-why-b2-is-useless)
-  - [4.5 Hand-check against raw cells](#45-hand-check-against-raw-cells)
-- [5. Model](#5-model)
-- [6. Results](#6-results)
-  - [6.1 Headline: v4](#61-headline-v4)
-  - [6.2 Generation ladder v1 to v4](#62-generation-ladder-v1--v4)
-  - [6.3 Peak detection](#63-peak-detection)
-  - [6.4 The failure mode: heavy episodes](#64-the-failure-mode-heavy-episodes)
-  - [6.5 Feature ablation](#65-feature-ablation)
-  - [6.6 Meteorology ablation and the leakage trap](#66-meteorology-ablation-and-the-leakage-trap)
-  - [6.7 The weighting trade-off, quantified](#67-the-weighting-trade-off-quantified)
-  - [6.8 Seed stability](#68-seed-stability)
-  - [6.9 Negative result: the dual-model route](#69-negative-result-the-dual-model-route)
-  - [6.10 Deep learning](#610-deep-learning)
-  - [6.11 A live forecast, published before verification](#611-a-live-forecast-published-before-verification)
-- [7. Demo application](#7-demo-application)
-- [8. Repository layout](#8-repository-layout)
-- [9. Quickstart](#9-quickstart)
-- [10. Limitations](#10-limitations)
-- [11. Roadmap](#11-roadmap)
-- [12. Documentation](#12-documentation)
+> **一句话。** 35 个北京站点的逐小时 PM2.5，在整点发布、只用 `T-1` 及更早的观测，预测第 h 小时这一个目标小时。
+> LightGBM v4 在**预先冻结、带指纹的固定样本集**上，相对持久性基线把 MAE 降低
+> **13.21% / 19.66% / 25.91%**，按自然日整块 bootstrap 的置信区间远离零。
 
 ---
 
-## 1. What this project is
+## 目录
 
-Air quality management needs to know, at 10:00 sharp, what the next few hours look like — not what
-last month looked like. This project builds that: an hourly nowcasting system for 35 monitoring
-stations inside Beijing, issuing three independent forecasts per station per hour (1, 3 and 6 hours
-ahead), served through a web dashboard and validated on a locked test window.
+- [1. 这个项目是什么](#1-这个项目是什么)
+- [2. 为什么它不是玩具](#2-为什么它不是玩具)
+- [3. 数据](#3-数据)
+  - [3.1 来源与覆盖](#31-来源与覆盖)
+  - [3.2 数仓表结构](#32-数仓表结构)
+  - [3.3 数据实际长什么样](#33-数据实际长什么样)
+  - [3.4 实测踩过的九个坑](#34-实测踩过的九个坑)
+  - [3.5 站点元数据](#35-站点元数据)
+- [4. 评价协议 p1](#4-评价协议-p1)
+  - [4.1 时间契约](#41-时间契约)
+  - [4.2 切分](#42-切分)
+  - [4.3 固定索引](#43-固定索引)
+  - [4.4 基线，以及为什么 B2 没用](#44-基线以及为什么-b2-没用)
+  - [4.5 与原始单元格手算对账](#45-与原始单元格手算对账)
+- [5. 模型](#5-模型)
+- [6. 实验结果](#6-实验结果)
+  - [6.1 主结果：v4](#61-主结果v4)
+  - [6.2 版本迭代 v1 → v4](#62-版本迭代-v1--v4)
+  - [6.3 峰值检出](#63-峰值检出)
+  - [6.4 失败模式：重污染过程](#64-失败模式重污染过程)
+  - [6.5 特征消融](#65-特征消融)
+  - [6.6 气象消融与泄漏陷阱](#66-气象消融与泄漏陷阱)
+  - [6.7 权重取舍的定量换算](#67-权重取舍的定量换算)
+  - [6.8 种子稳定性](#68-种子稳定性)
+  - [6.9 否定性结果：双模型路线](#69-否定性结果双模型路线)
+  - [6.10 深度学习](#610-深度学习)
+  - [6.11 一次先发布、后验证的实盘预报](#611-一次先发布后验证的实盘预报)
+- [7. 演示系统](#7-演示系统)
+- [8. 仓库结构](#8-仓库结构)
+- [9. 快速开始](#9-快速开始)
+- [10. 已知限制](#10-已知限制)
+- [11. 路线图](#11-路线图)
+- [12. 文档索引](#12-文档索引)
 
-**Scope**
+---
+
+## 1. 这个项目是什么
+
+空气质量业务要在 10:00 整点知道未来几小时会怎样，而不是上个月怎样。本项目做的就是这件事：
+针对北京 35 个监测站点，每小时为每站发布三条独立预报（提前 1、3、6 小时），带 Web 展示系统，
+并在一个锁定的测试窗口上完成验证。
 
 | | |
 |---|---|
-| Target | PM2.5 concentration, µg/m³, hourly, at 35 Beijing municipal stations |
-| Lead times | h = 1, 3, 6 hours — **three separate single-hour targets**, not a rolling curve |
-| Information set | observations up to and including `[T-1, T)`; optional ERA5 meteorology |
-| Evaluation | frozen index `p1`, 486 test days, daily-block bootstrap (2000 resamples) |
-| Serving | FastAPI + single-page dashboard; leak-free live inference path |
-| Stack | pandas / PyArrow warehouse → LightGBM 4.7 → PyTorch 2.11 (LSTM, TCN) → FastAPI |
+| 预测目标 | PM2.5 浓度，µg/m³，逐小时，北京 35 个市级站点 |
+| 提前量 | h = 1、3、6 小时——**三个独立的目标小时**，不是一条连续曲线 |
+| 信息集 | 截至 `[T-1, T)` 的观测；可选 ERA5 气象 |
+| 评价 | 固定索引 `p1`，486 个测试日，按自然日整块 bootstrap（2000 次） |
+| 服务 | FastAPI + 单页看板；独立的无泄漏实时推理通道 |
+| 技术栈 | pandas / PyArrow 数仓 → LightGBM 4.7 → PyTorch 2.11（LSTM、TCN）→ FastAPI |
 
-**Out of scope, stated plainly:** no Kafka, no Spark cluster run (designed, not executed), no PM10 /
-O₃ / NO₂ targets, one city only.
-
----
-
-## 2. Why it is not a toy
-
-**① A frozen protocol, not a sliding evaluation.** `PROTOCOL.md` fixes the issue time, the
-information cutoff and the exact target hour, then materialises the sample set once into
-`data/index/protocol=p1/` with a SHA-256 fingerprint `20f727bf…`. Every model — LightGBM, LSTM, TCN,
-every ablation — reuses the identical 5,266,800 `(station, issue_time, h)` rows. No one can re-filter
-the test set to look better.
-
-**② Uncertainty is resampled over days, not rows.** Hourly PM2.5 has lag-1 autocorrelation **0.974**.
-Row-level bootstrap would inflate the effective sample size by an order of magnitude and manufacture
-false precision, so all intervals resample whole **Beijing calendar days** (486 days at h = 1).
-
-**③ Leakage was hunted, not assumed away.** Open-Meteo's default `best_match` silently falls back to
-other models and returned a complete 24-hour "current day" — future hours included. Treating that as
-known-at-issue-time would have leaked the future. Pinning `models=era5` fixed it; §6.6 quantifies how
-much of the meteorology gain is real and how much depends on perfect forecasts.
-
-**④ Failures are reported as loudly as gains.** The model is **systematically low on heavy pollution**
-(§6.4), loses to persistence on the very first live case at h = 1 (§6.11), and the textbook `log1p`
-transform made things dramatically worse (§6.4). All of it is written down.
-
-**⑤ Two plausible routes were killed by evidence.** A dual-model peak-warning architecture (§6.9) and
-the deep-learning route (§6.10) were both evaluated and then rejected — with the numbers that killed them.
+**明确不做的：** 没有 Kafka，没有真正跑 Spark 集群（已设计未执行），不预测 PM10 / O₃ / NO₂，
+只做一个城市。
 
 ---
 
-## 3. Data
+## 2. 为什么它不是玩具
 
-### 3.1 Sources and coverage
+**① 冻结的协议，不是滑动的评价。** `PROTOCOL.md` 固定了发布时点、信息截止时刻和目标小时，
+并把样本集一次性物化到 `data/index/protocol=p1/`，带 SHA-256 指纹 `20f727bf…`。所有模型
+——LightGBM、LSTM、TCN、每一个消融——共用同一批 5,266,800 行 `(station, issue_time, h)`。
+没人能为了好看去重新过滤测试集。
+
+**② 不确定性按「天」重采样，不按行。** 小时 PM2.5 的 1 阶自相关是 **0.974**。按行 bootstrap 会把
+有效样本量放大几十倍、制造假精度，所以所有区间都按**北京自然日**整块重采样（h=1 时 486 天）。
+
+**③ 泄漏是查出来的，不是假设没有。** Open-Meteo 默认的 `best_match` 会在 ERA5 缺位时静默回退，
+给「当天」返回了完整 24 小时——包含尚未发生的时段。把它当成发布时已知的气象，等于把未来当已知。
+锁定 `models=era5` 后才干净；§6.6 量化了气象的收益里有多少是真本事、有多少依赖完美预报。
+
+**④ 失败和收益一样大声地写出来。** 模型在**重污染上系统性低估**（§6.4），第一次实盘在 h=1
+打不过持久性（§6.11），教科书推荐的 `log1p` 让结果大幅变差（§6.4）。这些全都写进文档。
+
+**⑤ 两条看起来合理的路线被证据否掉。** 双模型峰值预警（§6.9）和深度学习路线（§6.10）
+都做完并否决，连同否掉它们的数字一起留在仓库里。
+
+---
+
+## 3. 数据
+
+### 3.1 来源与覆盖
 
 ![rows](https://img.shields.io/badge/warehouse-20%2C428%2C659%20rows-2f6fed) ![raw](https://img.shields.io/badge/raw%20files-9.9%20GB-64748b) ![parquet](https://img.shields.io/badge/parquet-189%20MB-64748b)
 
-| Dataset | Source | Coverage | Days | Station-hours | Availability |
+| 数据集 | 来源 | 覆盖区间 | 天数 | 站点小时 / 规模 | 实得率 |
 |---|---|---|---|---|---|
-| `beijing_all` | quotsoft.net daily files | 2013-12-06 → 2026-10-29 | 4,711 | **3,892,140** | **98.35%** |
-| `beijing_extra` | quotsoft.net daily files | 2014-04-03 → 2026-10-29 | 4,593 | 3,793,720 | 98.33% |
-| `china_cities` | quotsoft.net daily files | 2014-05-13 → 2026-10-29 | 4,553 | 13 Jing-Jin-Ji cities | — |
-| `china_sites` | official annual bundles | 2014-05-13 → 2026-10-24 | 4,531 | **11,355,036** (130 stations) | 84.3% observed |
-| `meteo` | Open-Meteo `archive-api` (ERA5) | 2013-12 → 2026-10, incremental | — | 22 points × 11 variables | 99.9% |
+| `beijing_all` | quotsoft.net 日文件 | 2013-12-06 → 2026-10-29 | 4,711 | **3,892,140** | **98.35%** |
+| `beijing_extra` | quotsoft.net 日文件 | 2014-04-03 → 2026-10-29 | 4,593 | 3,793,720 | 98.33% |
+| `china_cities` | quotsoft.net 日文件 | 2014-05-13 → 2026-10-29 | 4,553 | 京津冀 13 城均值 | — |
+| `china_sites` | 官方网盘年度包 | 2014-05-13 → 2026-10-24 | 4,531 | **11,355,036**（130 站） | 84.3% observed |
+| `meteo` | Open-Meteo `archive-api`（ERA5） | 2013-12 → 2026-10，分批推进 | — | 22 点位 × 11 变量 | 99.9% |
 
-Things worth knowing about the data itself:
+关于数据本身，几件必须知道的事：
 
-- **Two different networks must not be confused.** `beijing_all` / `beijing_extra` are the 35-station
-  municipal network (the prediction target). `china_sites` is the **national** control network, where
-  Beijing has only 12 stations — its value is spatial context for Jing-Jin-Ji, not a substitute target.
-- **Perfect-score ceiling:** 4,711 days × 24 h × 35 stations = 3,957,240; actual 3,892,140. The gap is
-  25 whole days missing at source plus 351 partially missing days — kept and flagged, never imputed.
-- **Bundles were verified, not trusted.** Sampling 2024-01-01 / 07-15 / 12-31, the city CSVs inside the
-  official archives are **byte-identical** to the scraped daily files.
-- **Free-tier arithmetic is a design constraint:** Open-Meteo cost = points × variables × years.
-  22 × 11 × 14 = 3,388 stays under the 5,000/hour limit; the earlier 48 × 15 = 10,080 was throttled (429).
+- **两套站网不能混。** `beijing_all` / `beijing_extra` 是北京市级 35 站网（预测目标）；
+  `china_sites` 是**全国国控**网，北京仅 12 站——它的价值是京津冀空间上下文，不是目标的替代。
+- **满分上限：** 4,711 天 × 24 小时 × 35 站 = 3,957,240，实得 3,892,140。缺口来自 25 个源端整日缺档
+  加 351 个部分缺时日期——保留并标记，绝不填补。
+- **官方包是核验过的，不是拿来就用。** 抽样 2024-01-01 / 07-15 / 12-31，包内城市 CSV 与逐日抓取
+  **逐字节一致**。
+- **免费额度是设计约束：** Open-Meteo 权重 = 点位 × 变量 × 年数。22 × 11 × 14 = 3,388 控制在每小时
+  5,000 以内；早先的 48 × 15 = 10,080 直接被 429 限流。
 
-### 3.2 Warehouse schema
+### 3.2 数仓表结构
 
-Layer: `data/warehouse/fact_obs/source=<src>/year=<YYYY>/part.parquet` (zstd), plus
-`dim_meteo/point_id=<id>/part.parquet`.
+分层：`data/warehouse/fact_obs/source=<src>/year=<YYYY>/part.parquet`（zstd），
+另有 `dim_meteo/point_id=<id>/part.parquet`。
 
-| Column | Type | Meaning |
+| 列 | 类型 | 说明 |
 |---|---|---|
-| `date` | str | source file date, `YYYYMMDD` |
-| `hour` | int8 | 0–23, **start** of the hour, interval `[hour, hour+1)` |
-| `hour_start_local` | datetime | Beijing time = `date + hour` |
-| `hour_start_utc` | datetime | UTC = local − 8 h |
-| `name_cn` | str | station name, verbatim from the source header |
-| `network_era` | str | **A** = 2013-12-06 → 2021-01-17, **B** = 2021-01-24 → |
-| `pm25` `pm10` `so2` `no2` `o3` `co` | float | µg/m³ (CO converted from mg/m³, ×1000) |
-| `pm25_24h` `pm10_24h` `so2_24h` `no2_24h` `o3_24h` `o3_8h` `o3_8h_24h` `co_24h` | float | rolling statistics supplied by the source — **not** hourly values |
-| `aqi` | float | dimensionless index, **not** a concentration |
-| `value_status` | str | `observed` / `missing_value` / `out_of_range` (judged on `pm25`) |
-| `n_pollutants` | int8 | non-null pollutants in the row |
-| `n_out_of_range` | int8 | out-of-physical-range variables |
-| `source` | str | dataset name |
+| `date` | str | 源文件日期 `YYYYMMDD` |
+| `hour` | int8 | 0—23，该小时**起点**，区间 `[hour, hour+1)` |
+| `hour_start_local` | datetime | 北京时间 = `date + hour` |
+| `hour_start_utc` | datetime | UTC = local − 8h |
+| `name_cn` | str | 站点名（原文照录） |
+| `network_era` | str | **A** = 2013-12-06 → 2021-01-17，**B** = 2021-01-24 起 |
+| `pm25` `pm10` `so2` `no2` `o3` `co` | float | µg/m³（CO 由 mg/m³ 换算，×1000） |
+| `pm25_24h` `pm10_24h` `so2_24h` `no2_24h` `o3_24h` `o3_8h` `o3_8h_24h` `co_24h` | float | 源站提供的滑动统计量，**不是**小时值 |
+| `aqi` | float | 无量纲指数，**不能当浓度用** |
+| `value_status` | str | `observed` / `missing_value` / `out_of_range`（以 pm25 为准） |
+| `n_pollutants` | int8 | 该行非空污染物个数 |
+| `n_out_of_range` | int8 | 越界变量个数 |
+| `source` | str | 来源数据集名 |
 
-Primary key: `(source, network_era, name_cn, hour_start_utc)`.
+主键：`(source, network_era, name_cn, hour_start_utc)`。
 
-### 3.3 What the data actually looks like
+### 3.3 数据实际长什么样
 
-**Raw daily file** — wide format, one row per `hour × type`, one column per station
-(`data/raw/beijing_all/20260615.csv`):
+**原始日文件**——宽表，每行一个 `hour × type`，每列一个站点（`data/raw/beijing_all/20260615.csv`）：
 
 | date | hour | type | 东城东四 | 东城天坛 | 朝阳农展馆 | 海淀万柳 | 定陵(对照点) | 密云镇 |
 |---|---|---|---|---|---|---|---|---|
 | 20260615 | 10 | PM2.5 | 38 | 42 | 47 | 54 | 44 | 42 |
 | 20260615 | 10 | PM10 | 62 | 73 | 80 | 87 | 68 | 65 |
 
-**Warehouse row** — long format, one row per station-hour (real record, `beijing_all`, 2026-06-15 10:00):
+**数仓单行**——长表，每行一个站点-小时（真实记录，`beijing_all`，2026-06-15 10:00）：
 
 | hour | name_cn | pm25 | pm10 | aqi | hour_start_local | hour_start_utc | network_era | value_status | n_pollutants |
 |---|---|---|---|---|---|---|---|---|---|
 | 10 | 东城东四 | 38.0 | 62.0 | 59.0 | 2026-06-15 10:00 | 2026-06-15 02:00 | B | observed | 3 |
 
-**Frozen index rows** — what every model is scored on (station 东城东四, h = 1):
+**固定索引行**——所有模型被评分的依据（站点东城东四，h = 1）：
 
-| issue_time T | h | target window | y_true | B1 = y(T−1) | B2 = y(T−24h) | split |
+| 发布时点 T | h | 目标窗口 | y_true | B1 = y(T−1) | B2 = y(T−24h) | split |
 |---|---|---|---|---|---|---|
 | 2026-06-15 09:00 | 1 | 09:00 → 10:00 | 42.0 | 44.0 | 10.0 | test |
 | 2026-06-15 10:00 | 1 | 10:00 → 11:00 | 38.0 | 42.0 | 14.0 | test |
 | 2026-06-15 11:00 | 1 | 11:00 → 12:00 | `NaN` | 38.0 | 13.0 | test |
 
-The `NaN` is deliberate: the target hour is missing at source, the row stays in the index, and
-coverage is reported separately rather than silently dropped or filled.
+那个 `NaN` 是故意的：目标小时在源端缺失，行保留在索引里，覆盖率单独报告，而不是悄悄丢掉或填补。
 
-### 3.4 Nine traps that were actually hit
+### 3.4 实测踩过的九个坑
 
-Every one of these produced silently wrong numbers before being caught. They are documented because
-they are the difference between a pipeline that runs and a pipeline that is right.
+每一个都曾产生过「不报错但错」的数字。写出来，是因为它们正是「能跑通」和「是对的」之间的差别。
 
-| # | Trap | Why it is dangerous | Fix |
+| # | 坑 | 为什么危险 | 处理 |
 |---|---|---|---|
-| **D1** | **The station network was replaced on 2021-01-24** | Both eras have 35 stations and 38 columns, but only 10 stations correspond; 25 are new. Aligning by column position does not error — it silently mismatches stations | explicit `network_era` column; modelling uses era B only |
-| **D2** | `type` mixes `PM2.5`, `PM2.5_24h`, `AQI` in one file | using the 24 h rolling mean as an hourly value inflates scores and makes them unpredictable | exact match on `type == 'PM2.5'` |
-| **D3** | CO is in **mg/m³**, everything else µg/m³ | 1000× dimensional error, invisible in plots | normalised to µg/m³ at ingest |
-| **D4** | 351 days are *legitimately* partial (e.g. hours 0–17 only) | strict `rows == 120` validation deleted ~340 real days | record `missing_hours`, flag `partial` |
-| **D5** | `pivot_table(dropna=True)` drops an all-empty station column | station count silently 35 → 34, no error | forced `dropna=False` |
-| **D6** | The set of pollutant types grows over years | treating "type absent" as a defect would flag ~4,200 files | missing type is recorded, only a missing hour counts |
-| **D7** | `date` is a column, not a station | `melt` creates a pseudo-station named `date` whose "concentration" is `20200101` | dropped before melt |
-| **D8** | Archives contain macOS AppleDouble `._china_sites_*.csv` (4096 bytes, header `\x00\x05\x16\x07`) | same name as the real file after stripping `._` → real data replaced by binary junk, surfaces as `UnicodeDecodeError: byte 0xb0` | filter `._` prefix + magic-byte check |
-| **D9** | Archives contain nginx `404 Not Found` HTML (169 bytes) for 2018-12-22 → 12-26 | "exists and non-empty" but is a source outage record | `_is_html_junk()` → register as gap, never parse |
+| **D1** | **2021-01-24 站网整体换代** | 前后都是 35 站 38 列，但只有 10 个站能对应，25 个是新设站。按列位置对齐不会报错，只会静默错配站点 | 显式 `network_era` 列；建模只用纪元 B |
+| **D2** | `type` 里 `PM2.5`、`PM2.5_24h`、`AQI` 混排 | 把 24 小时滑动均值当小时浓度用，指标虚高且不可预测 | 精确匹配 `type == 'PM2.5'` |
+| **D3** | CO 单位是 **mg/m³**，其余是 µg/m³ | 1000 倍量纲错误，图上看不出来 | 入库统一换算为 µg/m³ |
+| **D4** | 351 天是**合法的**部分缺失（如只有 0—17 时） | 按 `rows == 120` 严格校验会误删约 340 天真实数据 | 记录 `missing_hours`，标 `partial` |
+| **D5** | `pivot_table(dropna=True)` 丢掉整站全空列 | 站点数悄悄从 35 变 34，不报错 | 强制 `dropna=False` |
+| **D6** | 污染物类型集合随年份演进 | 把「缺类型」当缺陷会误伤约 4,200 个文件 | 缺类型只记录，缺小时才算部分缺失 |
+| **D7** | `date` 是列名，不是站点 | `melt` 会生成一个名为 `date` 的伪站点，「浓度」等于 `20200101` | melt 前剔除 |
+| **D8** | 年包里有 macOS AppleDouble `._china_sites_*.csv`（4096 字节，头 `\x00\x05\x16\x07`） | 去掉 `._` 后与真数据同名，真数据被二进制垃圾顶掉，报错表现为 `UnicodeDecodeError: byte 0xb0` | 按 `._` 前缀剔除 + 文件头特征检测 |
+| **D9** | 年包里收录了 nginx `404 Not Found` 页面（169 字节，2018-12-22 → 12-26） | 「存在且非空」其实是源站故障记录 | `_is_html_junk()` → 登记为缺口，绝不解析 |
 
-### 3.5 Station metadata
+### 3.5 站点元数据
 
-- The official station list (23 versions, 2014-05-13 → 2025-02-25, 1,641 → 2,117 stations) covers
-  **national control stations only** — Beijing has just 12 of them.
-- The 12 overlapping stations were used to **validate** OpenStreetMap/Nominatim geocoding:
-  median deviation **3.75 km**, max **4.22 km**, none above 5 km → geocoding is trustworthy.
-- The other 23 municipal stations carry `coord_source=nominatim_osm` with the raw response cached.
-- Station codes change over time, so codes are resolved against *the version in force on that date* —
-  a 2020 table is never used to explain a 2014 code.
+- 官方站点表共 23 个版本（2014-05-13 → 2025-02-25，1,641 → 2,117 站），但**只收国控站**——北京仅 12 个。
+- 用这 12 个交叉站**校验** OpenStreetMap/Nominatim 地理编码：偏差中位 **3.75 km**，最大 **4.22 km**，
+  无 >5 km 的站 → 地理编码可信。
+- 其余 23 个市级站标注 `coord_source=nominatim_osm`，原始返回全部缓存可复核。
+- 站点编码随年份增删，因此按「该日期当时生效的最近一版站点表」解析，不用 2020 年的表解释 2014 年的编码。
 
 ---
 
-## 4. Evaluation protocol p1
+## 4. 评价协议 p1
 
-### 4.1 Time contract
+### 4.1 时间契约
 
-| Item | Definition |
+| 项 | 定义 |
 |---|---|
-| Time axis | Beijing time, **hour start**, half-open `[t, t+1)` |
-| Issue time `T` | top of an hour |
-| Available observations | up to `T-1`, i.e. `[T-1, T)` only |
-| Target for lead `h` | the **single hour** `[T+h-1, T+h)` |
+| 时间轴 | 北京时间「小时起点」，左闭右开 `[t, t+1)` |
+| 发布时点 `T` | 整点 |
+| 可用观测 | 只到 `T-1`，即 `[T-1, T)` |
+| 提前 h 的目标 | **单个小时** `[T+h-1, T+h)` |
 
-For `T = 10:00`:
+以 `T = 10:00` 为例：
 
-| Lead | Target window | B1 reads | B2 reads |
+| 提前量 | 目标窗口 | B1 取数 | B2 取数 |
 |---|---|---|---|
-| h = 1 | 10:00 – 11:00 | 09:00 | yesterday 10:00 |
-| h = 3 | 12:00 – 13:00 | 09:00 | yesterday 12:00 |
-| h = 6 | 15:00 – 16:00 | 09:00 | yesterday 15:00 |
+| h = 1 | 10:00 – 11:00 | 09:00 | 昨日 10:00 |
+| h = 3 | 12:00 – 13:00 | 09:00 | 昨日 12:00 |
+| h = 6 | 15:00 – 16:00 | 09:00 | 昨日 15:00 |
 
-The three leads are **three independent targets**, not samples of one continuous curve.
+三个跨度是**三个独立目标**，不是一条连续曲线的采样。
 
-### 4.2 Splits
+### 4.2 切分
 
-| Phase | From | To | Days | Purpose |
+| 阶段 | 起 | 止 | 天数 | 用途 |
 |---|---|---|---|---|
-| warmup | 2021-01-24 | 2021-02-08 | 15 | feature warm-up, never trained or scored |
-| train | 2021-02-08 | 2025-01-01 | 1,423 | fitting |
-| val | 2025-01-01 | 2025-07-01 | 181 | model selection, early stopping |
-| **test** | 2025-07-01 | 2026-10-30 | **486** | opened once |
+| warmup | 2021-01-24 | 2021-02-08 | 15 | 特征预热，不训练不评价 |
+| train | 2021-02-08 | 2025-01-01 | 1,423 | 拟合 |
+| val | 2025-01-01 | 2025-07-01 | 181 | 选型、早停 |
+| **test** | 2025-07-01 | 2026-10-30 | **486** | 只开封一次 |
 
-Era B only. A station-availability floor of 0.75 keeps all 35 stations (the two weakest are
-门头沟三家店 80.2% and 昌平南邵 81.6%).
+只用纪元 B。站点可用率下限设 0.75，保留全部 35 站（最弱两站：门头沟三家店 80.2%、昌平南邵 81.6%）。
 
-### 4.3 The frozen index
+### 4.3 固定索引
 
-`data/index/protocol=p1/h={1,3,6}/part.parquet` — **1,755,600 rows per lead**, 35 stations × 50,160
-issue times, 5,266,800 rows in total.
+`data/index/protocol=p1/h={1,3,6}/part.parquet`——**每个跨度 1,755,600 行**，
+35 站 × 50,160 个发布时点，合计 5,266,800 行。
 
-| Column | Type | Meaning |
+| 列 | 类型 | 说明 |
 |---|---|---|
-| `issue_time` | datetime | `T` |
-| `station_name` | category | station (era B naming) |
+| `issue_time` | datetime | 发布时点 `T` |
+| `station_name` | category | 站点名（纪元 B 命名） |
 | `h` | int8 | 1 / 3 / 6 |
-| `target_start`, `target_end` | datetime | target window, difference is **always** 1 hour |
-| `y_true` | float32 | truth, `NaN` when missing — never filled |
+| `target_start`、`target_end` | datetime | 目标窗口，差值**恒为** 1 小时 |
+| `y_true` | float32 | 真值，缺失为 `NaN`，从不填补 |
 | `b1_persistence` | float32 | `y(T-1)` |
-| `b2_yesterday` | float32 | `y(target − 24h)` |
+| `b2_yesterday` | float32 | `y(目标 − 24h)` |
 | `split` | category | train / val / test |
 
-Frozen means frozen: all models share these rows, rows with `y_true = NaN` stay in place, and
-regenerating the index changes the fingerprint — which would invalidate every number in this README.
+冻结就是冻结：所有模型共用这些行，`y_true = NaN` 的行原地保留，重建索引会改变指纹
+——那将让本 README 里的每一个数字失效。
 
-### 4.4 Baselines, and why B2 is useless
+### 4.4 基线，以及为什么 B2 没用
 
-| h | coverage | B1 MAE (train) | B2 MAE (train) |
+| h | 覆盖率 | B1 MAE（train） | B2 MAE（train） |
 |---|---|---|---|
 | 1 | 96.77% | **3.74** | 23.32 |
 | 3 | 96.77% | **8.35** | 23.31 |
 | 6 | 96.77% | **12.89** | 23.31 |
 
-On test: B1 = 3.23 / 7.43 / 11.59, B2 = 20.39 for all three leads.
+test 段：B1 = 3.23 / 7.43 / 11.59，B2 = 20.39（三个跨度几乎相同）。
 
-> `corr(y[t], y[t-1]) = 0.974` but `corr(y[t], y[t-24]) = 0.455`. PM2.5 mean / sd = 32.7 / 35.9 µg/m³.
-> "Yesterday at the same hour" is ~6× worse than hourly persistence, so **B2 is not a meaningful
-> bar**. Any model whose claim is "beats B2" has proven nothing.
+> `corr(y[t], y[t-1]) = 0.974`，而 `corr(y[t], y[t-24]) = 0.455`。PM2.5 均值 / 标准差 = 32.7 / 35.9 µg/m³。
+> 「昨日同期」比逐小时持久性差约 6 倍，**B2 不是有意义的门槛**。任何以「超过 B2」自证有效的模型，
+> 等于什么都没证明。
 
-The corollary is the entire justification for this project: persistence at h = 1 already sits at
-3.74 µg/m³ against a standard deviation of 35.9 — **a station's own history is nearly exhausted**.
-Gains must come from meteorology (wind, boundary-layer height) and from neighbouring stations.
+推论是本项目存在的全部理由：h=1 的持久性已经是 3.74 µg/m³，而观测标准差是 35.9——
+**本站自身历史几乎榨不出空间**。增益必须来自气象（风速、边界层高度）与邻站信息。
 
-### 4.5 Hand-check against raw cells
+### 4.5 与原始单元格手算对账
 
-`scripts/verify_index.py` bypasses the index builder and recomputes from raw CSV cells:
+`scripts/verify_index.py` 绕过索引构建代码，直接读原始 CSV 单元格复算：
 
 ```
-station 东城东四   T = 2026-06-15 10:00
- h  target window     manual y_true  index y_true   manual B1  index B1   manual B2  index B2
- 1  06-15 10:00—11:00        38           38            42        42          14        14   OK
- 3  06-15 12:00—13:00        39           39            42        42          12        12   OK
- 6  06-15 15:00—16:00        54           54            42        42          16        16   OK
+站点 东城东四   T = 2026-06-15 10:00
+ h  目标窗口            手算 y_true  索引 y_true   手算 B1  索引 B1   手算 B2  索引 B2
+ 1  06-15 10:00—11:00        38         38        42       42        14       14   一致
+ 3  06-15 12:00—13:00        39         39        42       42        12       12   一致
+ 6  06-15 15:00—16:00        54         54        42       42        16       16   一致
 ```
 
-All 3 stations × 3 leads match, covering day boundaries (22:00 issue → 03:00 target) and month
-boundaries. In addition the builder asserts on **all** 5,266,800 rows that
-`target_start − issue_time == h − 1 hours` and `target_end − target_start == 1 hour`.
+3 站 × 3 跨度全部一致，覆盖跨日边界（22:00 发布 → 次日 03:00 目标）与跨月边界。
+此外构建时对**全部** 5,266,800 行断言：`target_start − issue_time == h − 1 小时`、
+`target_end − target_start == 1 小时`。
 
 ---
 
-## 5. Model
+## 5. 模型
 
-| Item | Value |
+| 项 | 取值 |
 |---|---|
-| Model | LightGBM `objective=regression_l1` (optimises MAE directly) |
-| Features (v3) | 39 — station lags 8, rolling/diff 9, same-station other pollutants 6, Beijing background 1, regional means 3, graph features 5, time encoding 7 |
-| Features (v4) | 52 — the above + ERA5 variables (meteorology at `T-1` and at the target hour) |
-| Sample weights | PM2.5 ≥ 75 → ×2, ≥ 150 → ×5 (v3); ×3 / ×10 for v4 |
-| Early stopping | val MAE, 100 rounds |
-| Neighbourhood features | `nb_*` distance-weighted, `nbinv_*`, `bj_bg_loo` (leave-one-out), `region_city_mean` — leave-one-out so a station's own value never leaks into its own "regional background" |
-| Time encoding | built from the **target hour's** clock, not the issue time — a 10:00 issue at h = 6 targets 15:00, and pollution has a diurnal cycle |
-| Deep learning | LSTM / TCN, SEQ = 24, 5-channel (v1) and 14-channel (v2) inputs, PyTorch 2.11 + cu128 on an A40 |
+| 模型 | LightGBM `objective=regression_l1`（直接优化 MAE） |
+| 特征（v3） | 39 个——本站滞后 8、滚动/差分 9、同站其他污染物 6、北京背景 1、区域均值 3、图特征 5、时间编码 7 |
+| 特征（v4） | 52 个——上述 + ERA5 变量（`T-1` 时刻与目标小时的气象） |
+| 样本权重 | PM2.5 ≥ 75 → ×2，≥ 150 → ×5（v3）；v4 为 ×3 / ×10 |
+| 早停 | 验证集 MAE，100 轮 |
+| 邻域特征 | `nb_*` 距离加权、`nbinv_*`、`bj_bg_loo`（留一法）、`region_city_mean`——留一法保证本站值不会混进自己的「区域背景」 |
+| 时间编码 | 用**目标小时**的时钟构造，不是发布时点——10:00 发布、h=6 的目标是 15:00，而污染有日循环 |
+| 深度学习 | LSTM / TCN，SEQ = 24，5 通道（v1）与 14 通道（v2）输入，PyTorch 2.11 + cu128，A40 |
 
 ---
 
-## 6. Results
+## 6. 实验结果
 
-### 6.1 Headline: v4
+### 6.1 主结果：v4
 
-LightGBM v4 — 52 features, ERA5 meteorology, weights ×3 / ×10. Test window 2025-07-01 → 2026-10-30.
+LightGBM v4——52 特征、ERA5 气象、权重 ×3 / ×10。测试窗口 2025-07-01 → 2026-10-30。
 
-| h | MAE | B1 MAE | improvement | 95% CI | P(gain ≤ 0) | significant |
+| h | MAE | B1 MAE | 提升 | 95% CI | P(提升≤0) | 显著 |
 |---|---|---|---|---|---|---|
-| 1 | 2.802 | 3.228 | **+13.21%** | +11.11% – +15.00% | 0.0000 | yes |
-| 3 | **5.965** | 7.425 | **+19.66%** | +18.27% – +21.00% | 0.0000 | yes |
-| 6 | **8.588** | 11.592 | **+25.91%** | +24.04% – +27.84% | 0.0000 | yes |
+| 1 | 2.802 | 3.228 | **+13.21%** | +11.11% – +15.00% | 0.0000 | 是 |
+| 3 | **5.965** | 7.425 | **+19.66%** | +18.27% – +21.00% | 0.0000 | 是 |
+| 6 | **8.588** | 11.592 | **+25.91%** | +24.04% – +27.84% | 0.0000 | 是 |
 
-Bootstrap: 2,000 resamples over Beijing calendar days (486 days at h = 1, 484 at h = 6).
+bootstrap：按北京自然日重采样 2,000 次（h=1 时 486 天，h=6 时 484 天）。
 
-### 6.2 Generation ladder v1 → v4
+### 6.2 版本迭代 v1 → v4
 
-![Version progression](docs/figures/fig2_progression.png)
+![版本演进](docs/figures/fig2_progression.png)
 
-*Each step adds exactly one thing; the long leads are where meteorology pays off.*
+*每一步只加一件事；长跨度才是气象兑现价值的地方。*
 
-| Version | Change | h = 1 | h = 3 | h = 6 |
+| 版本 | 变化 | h = 1 | h = 3 | h = 6 |
 |---|---|---|---|---|
-| v1 | 34 features, no meteorology | +13.89% | +16.33% | +18.27% |
-| v2 | + sample weights (×2 / ×5) | +13.24% | +14.48% | +16.57% |
-| v3 | + graph features (39 total) | +13.79% | +15.15% | +16.61% |
-| **v4** | + ERA5 (52 total), weights ×3 / ×10 | +13.21% | **+19.66%** | **+25.91%** |
+| v1 | 34 特征，无气象 | +13.89% | +16.33% | +18.27% |
+| v2 | + 样本加权（×2 / ×5） | +13.24% | +14.48% | +16.57% |
+| v3 | + 图特征（共 39） | +13.79% | +15.15% | +16.61% |
+| **v4** | + ERA5（共 52），权重 ×3 / ×10 | +13.21% | **+19.66%** | **+25.91%** |
 
-Absolute MAE along the ladder: v1 2.780 / 6.213 / 9.474 → v2 2.800 / 6.350 / 9.671 →
-v3 2.783 / 6.300 / 9.666 → v4 2.802 / 5.965 / 8.588.
+沿途绝对 MAE：v1 2.780 / 6.213 / 9.474 → v2 2.800 / 6.350 / 9.671 →
+v3 2.783 / 6.300 / 9.666 → v4 2.802 / 5.965 / 8.588。
 
-Note that v2 and v3 *lower* the headline gain on purpose: weighting trades average accuracy for
-accuracy where people actually care (§6.7).
+注意 v2、v3 是**故意**压低总体增益的：加权用平均精度去换真正被关心的那一侧的精度（§6.7）。
 
-### 6.3 Peak detection
+### 6.3 峰值检出
 
-Threshold = each station's q95 on the training period.
+阈值 = 各站训练期 q95。
 
-| h | Model | Precision | Recall | F1 | events |
+| h | 模型 | 精确率 | 召回率 | F1 | 事件数 |
 |---|---|---|---|---|---|
 | 1 | LightGBM v1 | 0.918 | 0.879 | **0.898** | 9,401 |
 | 1 | B1 | 0.884 | 0.886 | 0.885 | 9,236 |
@@ -367,267 +350,247 @@ Threshold = each station's q95 on the training period.
 | 6 | LightGBM v1 | **0.724** | 0.552 | **0.626** | 9,401 |
 | 6 | B1 | 0.578 | **0.588** | 0.583 | 9,108 |
 
-The model buys precision with recall at h = 6: when it calls a peak it is right far more often than
-persistence, but it misses some. After weighting (v2) the h = 6 recall rises to 0.651 — the first time
-it clearly beats B1 (0.588) — and F1 rises to 0.638.
+h=6 时模型用召回率换精确率：它报峰值时报准的概率远高于持久性，但会漏掉一些。
+加权后（v2）h=6 的召回率升到 0.651——首次明显超过 B1（0.588），F1 升到 0.638。
 
-### 6.4 The failure mode: heavy episodes
+### 6.4 失败模式：重污染过程
 
-![Concentration gradient](docs/figures/fig3_concentration.png)
+![浓度分档](docs/figures/fig3_concentration.png)
 
-*Gain versus B1 at h = 6, split by true concentration. Left bars: unweighted. Right bars: weighted. Same data, same split.*
+*h=6、按真值浓度分档的增益。左柱为未加权，右柱为加权，同一份数据、同一个切分。*
 
-Unweighted, the gain **decreases monotonically with concentration and turns negative**:
+未加权时，增益**随浓度单调递减并转负**：
 
-| concentration band | n (h=1) | h = 1 | h = 3 | h = 6 |
+| 浓度档 | n（h=1） | h = 1 | h = 3 | h = 6 |
 |---|---|---|---|---|
-| good (< 35) | 295,324 | +14.6% | +19.5% | **+22.1%** |
-| moderate (35–75) | 75,278 | +14.0% | +14.4% | +17.0% |
-| light (75–115) | 18,728 | +12.2% | +7.7% | +7.5% |
-| medium (115–150) | 4,807 | +9.4% | +7.2% | +5.9% |
-| **heavy (150–250)** | 2,249 | +4.5% | **−0.9%** | **−23.1%** |
-| **severe (> 250)** | 9 | **−26.5%** | **−41.6%** | **−9.7%** |
+| 优（< 35） | 295,324 | +14.6% | +19.5% | **+22.1%** |
+| 良（35–75） | 75,278 | +14.0% | +14.4% | +17.0% |
+| 轻度（75–115） | 18,728 | +12.2% | +7.7% | +7.5% |
+| 中度（115–150） | 4,807 | +9.4% | +7.2% | +5.9% |
+| **重度（150–250）** | 2,249 | +4.5% | **−0.9%** | **−23.1%** |
+| **严重（> 250）** | 9 | **−26.5%** | **−41.6%** | **−9.7%** |
 
-Classic regression to the mean: extreme samples are rare, and an L1 objective makes trees
-conservative, so peaks get flattened. At h = 6 the heavy band is 32.0 µg/m³ MAE versus 26.0 for
-persistence — the whole failure is concentrated there. (The severe band holds 9 samples; the
-direction is consistent but the magnitude is not statistically meaningful, and is labelled as such.)
+典型的回归到均值：极端样本稀少，而 L1 目标让树模型偏向保守，于是峰值被压低。
+h=6 的重度档 MAE 32.0，而持久性 26.0——失败几乎全部集中在这里。（严重档只有 9 个样本，
+方向一致但幅度不具备统计意义，已如实标注。）
 
-**Three fixes were tried, five variants:**
+**试了三种思路、五个变体：**
 
-| h | variant | overall MAE | overall gain | heavy-band MAE | heavy-band B1 | heavy gain | peak F1 |
+| h | 变体 | 整体 MAE | 整体增益 | 重度档 MAE | 重度档 B1 | 重度增益 | 峰值 F1 |
 |---|---|---|---|---|---|---|---|
 | 1 | base | 2.780 | +13.89% | 6.91 | 6.89 | −0.2% | 0.898 |
-| 1 | **weights** | 2.800 | +13.24% | 6.22 | 6.89 | **+9.8%** | 0.898 |
+| 1 | **加权** | 2.800 | +13.24% | 6.22 | 6.89 | **+9.8%** | 0.898 |
 | 3 | base | 6.213 | +16.33% | 17.40 | 16.47 | −5.6% | 0.764 |
-| 3 | **weights** | 6.350 | +14.48% | 15.03 | 16.47 | **+8.8%** | 0.761 |
+| 3 | **加权** | 6.350 | +14.48% | 15.03 | 16.47 | **+8.8%** | 0.761 |
 | 6 | base | 9.474 | +18.27% | 33.69 | 26.57 | −26.8% | 0.626 |
-| 6 | weights | 9.671 | +16.57% | 22.51 | 26.57 | **+15.3%** | 0.638 |
-| 6 | q60 quantile | 9.725 | +16.10% | 26.40 | 26.57 | +0.6% | 0.637 |
-| 6 | q75 quantile | 11.203 | +3.35% | 20.95 | 26.57 | +21.1% | 0.634 |
+| 6 | 加权 | 9.671 | +16.57% | 22.51 | 26.57 | **+15.3%** | 0.638 |
+| 6 | q60 分位数 | 9.725 | +16.10% | 26.40 | 26.57 | +0.6% | 0.637 |
+| 6 | q75 分位数 | 11.203 | +3.35% | 20.95 | 26.57 | +21.1% | 0.634 |
 | 6 | `log1p` | 9.879 | +14.77% | 50.78 | 26.57 | **−91.2%** | 0.485 |
 
-> **Sample weighting is the only fix that works at all three leads**, flipping −0.2 / −5.6 / −26.8%
-> into **+9.8 / +8.8 / +15.3%** for 0.5–2.3 points of average accuracy. Worth it.
+> **样本加权是唯一在三个跨度上都奏效的方案**，把 −0.2 / −5.6 / −26.8% 全部翻成
+> **+9.8 / +8.8 / +15.3%**，代价是 0.5—2.3 个百分点的平均精度。值得。
 >
-> **`log1p` failed spectacularly and in the wrong direction** — heavy-band MAE 33.69 → 50.78,
-> peak F1 down to 0.485. The textbook remedy for right-skewed data is wrong here: compressing the
-> extremes harder, then mapping an L1 centre back, still undershoots. Filed as *"conventional wisdom
-> does not automatically transfer"*.
+> **`log1p` 彻底失败且方向反了**——重度档 MAE 从 33.69 恶化到 50.78，峰值 F1 掉到 0.485。
+> 教科书推荐用对数变换处理右偏分布，这里实测是错的：把极值压缩得更狠，再把 L1 的中心估计映射回来，
+> 结果仍然偏低。作为「经验做法未必适用」的实例记录在案。
 >
-> **Quantile loss is a sledgehammer** — α = 0.75 reaches +21.1% on heavy episodes and recall 0.742,
-> but overall gain collapses to +3.35%. Usable only as a dedicated warning model, if at all (§6.9).
+> **分位数损失是猛药**——α = 0.75 把重度档做到 +21.1%、召回率 0.742，但整体增益崩到 +3.35%。
+> 最多只能当专用预警模型，而且实际上也不需要（§6.9）。
 
-After weighting, the gradient disappears (v2, h = 6): +18.0 / +13.2 / +15.9 / +19.8 / **+18.5** / +4.9 —
-a stable +7% to +20% band, at the cost of the cleanest band dropping from +22.1% to +18.0%.
+加权后浓度梯度消失（v2，h=6）：+18.0 / +13.2 / +15.9 / +19.8 / **+18.5** / +4.9——
+稳定在 +7% 到 +20% 区间，代价是最干净的档位从 +22.1% 回落到 +18.0%。
 
-### 6.5 Feature ablation
+### 6.5 特征消融
 
-39-feature weighted configuration, seed 42, test split. Gain versus B1:
+39 特征加权配置，种子 42，test 段。相对 B1 的增益：
 
-| feature group removed | # | h = 1 | h = 3 | h = 6 |
+| 去掉的特征组 | 特征数 | h = 1 | h = 3 | h = 6 |
 |---|---|---|---|---|
 | **full** | 39 | **+13.83%** | **+15.48%** | +16.25% |
-| graph features (`nb_*`) | 34 | +13.13% | +14.84% | **+16.36%** |
-| neighbourhood (Beijing background + regional means) | 35 | +13.50% | +14.03% | +13.55% |
-| same-station other pollutants | 33 | +13.09% | +14.10% | +15.02% |
-| rolling statistics | 30 | +12.91% | +14.43% | +15.82% |
-| **time encoding** | 32 | **+12.57%** | **+12.59%** | **+12.80%** |
-| **lags only** | 8 | **+8.66%** | **+4.85%** | **+3.18%** |
+| 图特征（`nb_*`） | 34 | +13.13% | +14.84% | **+16.36%** |
+| 邻域（北京背景 + 区域均值） | 35 | +13.50% | +14.03% | +13.55% |
+| 同站其他污染物 | 33 | +13.09% | +14.10% | +15.02% |
+| 滚动统计 | 30 | +12.91% | +14.43% | +15.82% |
+| **时间编码** | 32 | **+12.57%** | **+12.59%** | **+12.80%** |
+| **仅滞后** | 8 | **+8.66%** | **+4.85%** | **+3.18%** |
 
-Heavy-band (≥ 150 µg/m³) gain:
+重度档（≥ 150 µg/m³）增益：
 
-| group | h = 1 | h = 3 | h = 6 |
+| 特征组 | h = 1 | h = 3 | h = 6 |
 |---|---|---|---|
 | full | **+11.1%** | **+13.1%** | **+20.0%** |
-| graph features | +9.1% | +9.4% | +15.2% |
-| neighbourhood | +11.1% | +11.2% | +20.1% |
-| same-station pollutants | +8.5% | +12.1% | +12.4% |
-| rolling statistics | +8.1% | +12.0% | +19.8% |
-| time encoding | +9.0% | +10.9% | +7.3% |
-| lags only | +4.3% | +8.4% | **−6.0%** |
+| 图特征 | +9.1% | +9.4% | +15.2% |
+| 邻域 | +11.1% | +11.2% | +20.1% |
+| 同站其他污染物 | +8.5% | +12.1% | +12.4% |
+| 滚动统计 | +8.1% | +12.0% | +19.8% |
+| 时间编码 | +9.0% | +10.9% | +7.3% |
+| 仅滞后 | +4.3% | +8.4% | **−6.0%** |
 
-Peak F1: full **0.900 / 0.767 / 0.651**; lags-only 0.891 / 0.734 / 0.568.
+峰值 F1：full **0.900 / 0.767 / 0.651**；仅滞后 0.891 / 0.734 / 0.568。
 
-Four conclusions:
+四条结论：
 
-1. **Time encoding is the single most valuable group** — removing it costs 1.26 / 2.89 / 3.45 points
-   overall and 12.8 points on heavy episodes at h = 6. Lags carry "the last hour", not "what time it
-   is or what season".
-2. **Station lags alone are not enough, and get weaker with lead time**: +8.66% at h = 1 is mostly
-   persistence; by h = 6 only +3.18%, and negative on heavy episodes. The third independent
-   confirmation that a station's own history is nearly exhausted (§4.4).
-3. **Graph features move accuracy toward high concentrations** — heavy band **+2.0 / +3.7 / +4.8**
-   points and peak F1 +0.002 / +0.005 / +0.010 — while being roughly neutral on the average
-   (−0.70 / +0.64 / −0.11). Redistribution, not a free lunch. The longer the lead, the bigger the payoff.
-4. **Rolling statistics matter more than an earlier draft claimed.** Removing them costs
-   0.92 / 1.05 / 0.43 points — larger at short leads, unlike graph features.
+1. **时间编码是单组最重要的特征**——去掉后整体掉 1.26 / 2.89 / 3.45 个百分点，h=6 的重度档掉 12.8 个点。
+   滞后特征只携带「上一小时」，不携带「现在几点、什么季节」。
+2. **只用本站滞后远远不够，而且跨度越长越乏力**：h=1 的 +8.66% 主要来自一小时内的强持续性，
+   到 h=6 只剩 +3.18%，重度档为负。这是「本站历史已被榨干」的第三次独立印证（§4.4）。
+3. **图特征把精度重新分配到高浓度一侧**——重度档 **+2.0 / +3.7 / +4.8** 个点、峰值 F1 +0.002 / +0.005 / +0.010，
+   而平均值近乎中性（−0.70 / +0.64 / −0.11）。是再分配，不是免费午餐；跨度越长收益越大。
+4. **滚动统计的贡献比早先一版判断的大**：去掉后掉 0.92 / 1.05 / 0.43 个点，短跨度更明显。
 
-### 6.6 Meteorology ablation and the leakage trap
+### 6.6 气象消融与泄漏陷阱
 
-**The trap first.** Open-Meteo's default `best_match` silently falls back to other models when ERA5 is
-unavailable and returned a complete 24-hour "current day" — including hours that had not happened.
-Pinned `models=era5`. Known limits, verified: ERA5 ends around early October 2026 (the last ~3 weeks are
-`NaN`, not interpolated); `boundary_layer_height` is missing for **2024-01 → 2024-06** (upstream hole);
-other variables 99.9% available.
+**先说陷阱。** Open-Meteo 默认的 `best_match` 在 ERA5 缺位时静默回退到其他模式，
+给「当天」返回了完整 24 小时——包含尚未发生的时段。已锁定 `models=era5`。
+已核实的边界：ERA5 数据到 2026 年 10 月初为止（最后约三周为 `NaN`，不插值）；
+`boundary_layer_height` 在 **2024-01 → 2024-06** 整段缺失（上游空洞）；其余变量可用率 99.9%。
 
-Physical-direction check passes at h = 6: BLH −0.176, wind speed −0.135, VPD −0.181, temperature
-−0.186, humidity +0.146, pressure +0.073 — all plausible in sign and magnitude (a 0.8+ correlation
-would have suggested leakage, not skill).
+物理方向检查通过（h=6）：BLH −0.176、风速 −0.135、VPD −0.181、温度 −0.186、湿度 +0.146、气压 +0.073
+——符号与量级都合理（若达 0.8 以上反而要怀疑泄漏）。
 
-**Ablation (gain vs B1):**
+**消融（相对 B1 的增益）：**
 
-| feature set | # | h = 1 | h = 3 | h = 6 |
+| 特征集 | 特征数 | h = 1 | h = 3 | h = 6 |
 |---|---|---|---|---|
-| full (meteo at `T-1` **and** target hour) | 52 | **+15.56%** | **+21.94%** | **+27.63%** |
-| target-hour meteo only | 49 | +15.36% | +21.76% | +27.33% |
-| **`T-1` meteo only (strictly known at issue)** | 42 | +14.34% | **+16.48%** | **+18.13%** |
-| no meteorology | 39 | +13.83% | +15.48% | +16.25% |
+| full（`T-1` 气象 **与** 目标小时气象） | 52 | **+15.56%** | **+21.94%** | **+27.63%** |
+| 仅目标小时气象 | 49 | +15.36% | +21.76% | +27.33% |
+| **仅 `T-1` 气象（发布时严格已知）** | 42 | +14.34% | **+16.48%** | **+18.13%** |
+| 无气象 | 39 | +13.83% | +15.48% | +16.25% |
 
-Peak F1: full 0.902 / **0.784** / **0.695**; `T-1`-only 0.902 / 0.772 / 0.652; no-meteo 0.900 / 0.767 / 0.651.
+峰值 F1：full 0.902 / **0.784** / **0.695**；仅 `T-1` 0.902 / 0.772 / 0.652；无气象 0.900 / 0.767 / 0.651。
 
-> **Most of the meteorology value comes from weather at the target hour, not at issue time.**
-> `T-1` weather is worth **0.5 / 1.0 / 1.9** points; target-hour weather is worth **1.2 / 5.5 / 9.5** points.
+> **气象的价值绝大部分来自「目标小时的气象」，而不是「发布时刻的气象」。**
+> `T-1` 气象只值 **0.5 / 1.0 / 1.9** 个百分点；目标小时气象值 **1.2 / 5.5 / 9.5** 个百分点。
 >
-> ERA5 is reanalysis — a perfect forecast. So **+27.63% is an upper bound and +18.13% is the
-> deliverable floor.** Both must be reported together, with the reason for the gap: the value of
-> meteorology depends on forecast quality, not on observation quality.
+> ERA5 是再分析数据，相当于「完美预报」。所以 **+27.63% 是上限，+18.13% 是可交付的下限**。
+> 两者必须同时出现，并说明差异来源：气象的价值高度依赖**预报质量**，而不是观测质量。
 
-An anomaly was also investigated and resolved: an earlier one-lead analysis claimed meteorology *hurt*
-heavy episodes. A weight × meteorology cross experiment showed it was **hyper-parameter mismatch** —
-the ≥150 ×5 weights were tuned for the no-meteo model. With meteorology added, the model leans less on
-`pm25_lag1`, so heavier weights are needed to pull attention back to extremes. At h = 6, meteorology
-with ×3 / ×10 reaches heavy +21.3% and ×5 / ×20 reaches +27.5%, both above the no-meteo best (+25.4%).
+还查清了一个反常：早先只看单个跨度时得出「加气象伤重度档」。做完「权重 × 气象」交叉实验后确认，
+这是**超参失配**——`≥150 ×5` 的权重是为无气象模型调的。加气象后模型对 `pm25_lag1` 的依赖下降，
+需要更强的重度加权才能把注意力拉回极端样本。h=6 下含气象 + ×3/×10 的重度档达 +21.3%，
+×5/×20 达 +27.5%，都高于无气象的最好水平（+25.4%）。
 
-> Lesson recorded in the docs: an ablation must re-tune its hyper-parameters, or "feature removed" and
-> "best hyper-parameters changed" get confounded, and a mis-tuned weight gets misread as a harmful feature.
+> 教训：消融必须**连同超参一起重调**，否则「去掉某组特征」和「换了最优超参」两个因素混在一起，
+> 会把超参失配误判成特征有害。
 
-### 6.7 The weighting trade-off, quantified
+### 6.7 权重取舍的定量换算
 
-v4 (meteo + ×3 / ×10) versus ×2 / ×5, per lead:
+v4（含气象 + ×3/×10）与 ×2/×5 逐跨度对比：
 
-| h | ×3×10 overall | ×3×10 heavy | ×2×5 overall | ×2×5 heavy | overall Δ | heavy Δ | **exchange rate** |
+| h | ×3×10 整体 | ×3×10 重度 | ×2×5 整体 | ×2×5 重度 | 整体差 | 重度差 | **换算率** |
 |---|---|---|---|---|---|---|---|
 | 1 | +13.21% | +12.3% | **+15.56%** | +9.9% | −2.35 | **+2.4** | **1 : 1.0** |
 | 3 | +19.66% | +15.9% | **+21.94%** | +8.8% | −2.28 | **+7.1** | **1 : 3.1** |
 | 6 | +25.91% | +21.3% | **+27.63%** | +12.8% | −1.72 | **+8.5** | **1 : 4.9** |
 
-Peak F1 is essentially identical across both weightings (0.901/0.902, 0.784/0.784, 0.693/0.695), so
-**F1 cannot be used to choose weights**. The honest phrasing is not "h = 1 prefers light weights" but
-"the accuracy you pay for heavy-episode accuracy converts at 1 : 1, 1 : 3.1 and 1 : 4.9" — hence
-×2 / ×5 at h = 1 and ×3 / ×10 at h = 3 and h = 6.
+两套权重下峰值 F1 几乎相同（0.901/0.902、0.784/0.784、0.693/0.695），**所以 F1 不能用来选权重**。
+正确的表述不是「h=1 偏好轻权重」，而是「为重度档付出的整体精度，其换算率是 1 : 1、1 : 3.1、1 : 4.9」
+——因此 h=1 用 ×2/×5，h=3 与 h=6 用 ×3/×10。
 
-### 6.8 Seed stability
+### 6.8 种子稳定性
 
-| seed | h = 1 | h = 3 | h = 6 |
+| 种子 | h = 1 | h = 3 | h = 6 |
 |---|---|---|---|
 | 7 | +13.43% | +15.35% | +16.42% |
 | 42 | +13.83% | +15.48% | +16.25% |
 | 2024 | +13.74% | +15.18% | +16.53% |
-| **mean** | **13.67%** | **15.34%** | **16.40%** |
-| sd | 0.21 | 0.15 | 0.14 |
-| range | 0.40 | 0.30 | 0.28 |
+| **均值** | **13.67%** | **15.34%** | **16.40%** |
+| 标准差 | 0.21 | 0.15 | 0.14 |
+| 极差 | 0.40 | 0.30 | 0.28 |
 
-Heavy-band gain: mean 10.4% / 13.1% / 20.7%, sd 0.9 / 0.5 / 1.2.
+重度档增益：均值 10.4% / 13.1% / 20.7%，标准差 0.9 / 0.5 / 1.2。
 
-> The three seeds span only 0.28–0.40 points — *narrower* than the bootstrap CI of ±0.7–1.5 points.
-> Two things follow: the result is not seed luck, and **the real uncertainty comes from which days
-> you happen to test on, not from random initialisation** — which is exactly why the bootstrap is
-> day-block, not row-level.
+> 三个种子的极差只有 0.28—0.40 个百分点，**比 bootstrap 置信区间（±0.7—1.5pp）还窄**。
+> 两件事随之成立：结果不是种子运气；**真正的不确定性来自「选了哪些天来测」，而不是随机初始化**
+> ——这正是必须按自然日而非按行做 bootstrap 的原因。
 
-### 6.9 Negative result: the dual-model route
+### 6.9 否定性结果：双模型路线
 
-§6.4 suggested a "main model + dedicated peak-warning q75 model" architecture. It was tested and
-**rejected**:
+§6.4 曾推测可以走「主模型 + 专用峰值预警 q75 模型」。实测后**否决**：
 
-| h | variant | overall gain | heavy gain | P | R | F1 |
+| h | 变体 | 整体增益 | 重度增益 | P | R | F1 |
 |---|---|---|---|---|---|---|
 | 1 | base | +14.54% | +2.2% | 0.914 | 0.883 | 0.899 |
-| 1 | **weighted** | +13.79% | +10.3% | 0.910 | 0.892 | **0.901** |
+| 1 | **加权** | +13.79% | +10.3% | 0.910 | 0.892 | **0.901** |
 | 1 | q75 | −2.07% | +1.1% | 0.845 | **0.939** | 0.890 |
 | 3 | base | +16.90% | −6.1% | 0.814 | 0.722 | 0.765 |
-| 3 | **weighted** | +15.15% | +12.3% | 0.762 | 0.774 | **0.768** |
+| 3 | **加权** | +15.15% | +12.3% | 0.762 | 0.774 | **0.768** |
 | 3 | q75 | −0.81% | +11.9% | 0.675 | **0.853** | 0.754 |
 | 6 | base | +18.27% | −26.8% | 0.724 | 0.552 | 0.626 |
-| 6 | **weighted** | +16.57% | +15.3% | 0.626 | 0.651 | **0.638** |
+| 6 | **加权** | +16.57% | +15.3% | 0.626 | 0.651 | **0.638** |
 | 6 | q75 | +3.35% | +21.1% | 0.554 | **0.742** | 0.634 |
 
-q75 never beats the weighted single model on F1; it only swaps precision for recall. And a single
-model can do that by **moving the threshold**:
+q75 在每个跨度上的 F1 都不如加权单模型，它只是把精确率换成了召回率。而单模型只要**移动阈值**就能做到：
 
-| strategy (h = 6) | P | R | F1 |
+| 策略（h = 6） | P | R | F1 |
 |---|---|---|---|
-| v3 default threshold (×1.00) | 0.627 | 0.687 | **0.656** |
-| v3 threshold ×0.95 | 0.573 | 0.745 | 0.648 |
-| v3 threshold ×0.90 | 0.512 | 0.798 | 0.624 |
-| q75 standalone model | 0.554 | 0.742 | 0.634 |
+| v3 默认阈值（×1.00） | 0.627 | 0.687 | **0.656** |
+| v3 阈值 ×0.95 | 0.573 | 0.745 | 0.648 |
+| v3 阈值 ×0.90 | 0.512 | 0.798 | 0.624 |
+| q75 独立模型 | 0.554 | 0.742 | 0.634 |
 
-At matched recall (~0.74), the single model at ×0.95 dominates the purpose-built quantile model.
-**A second model is a redundant layer of complexity.** The right way to do warning is one model plus
-a published P-R curve and a business-selected operating point.
+在召回率对齐到约 0.74 时，单模型 ×0.95 全面优于专门训练的分位数模型。
+**双模型是多余的一层复杂度。** 正确的预警做法是：一个模型 + 一条公开的 P-R 曲线 + 业务选定的工作点。
 
-### 6.10 Deep learning
+### 6.10 深度学习
 
-![Model comparison](docs/figures/fig4_models.png)
+![模型对比](docs/figures/fig4_models.png)
 
-*Measured in one GPU run on the A40 host; the LightGBM baseline here is that run's re-fit (2.839 / 6.010 / 8.627). The formal v4 run reports 2.802 / 5.965 / 8.588 — ordinary run-to-run variation.*
+*在同一次 A40 GPU 运行中测得；此处的 LightGBM 基线是那次运行的重训结果（2.839 / 6.010 / 8.627）。
+正式 v4 运行报的是 2.802 / 5.965 / 8.588，属正常的运行间波动。*
 
-| Model | h = 1 MAE | h = 3 MAE | h = 6 MAE | gain vs B1 (1/3/6) |
+| 模型 | h = 1 MAE | h = 3 MAE | h = 6 MAE | 相对 B1 增益（1/3/6） |
 |---|---|---|---|---|
-| LightGBM v4 (baseline) | 2.839 | 6.010 | 8.627 | +12.1% / +19.1% / +25.6% |
-| LSTM v1 (5 ch) | 2.993 | 6.876 | 10.679 | +6.8% / +7.1% / +7.7% |
-| TCN v1 (5 ch) | 3.345 | 7.223 | 10.945 | −4.2% / +2.4% / +5.4% |
-| **LSTM v2 (14 ch)** | **2.846** | **6.265** | **9.425** | **+10.8% / +15.0% / +18.2%** |
-| TCN v2 (14 ch) | 3.108 | 6.550 | 9.697 | +2.6% / +11.1% / +15.8% |
+| LightGBM v4（基准） | 2.839 | 6.010 | 8.627 | +12.1% / +19.1% / +25.6% |
+| LSTM v1（5 通道） | 2.993 | 6.876 | 10.679 | +6.8% / +7.1% / +7.7% |
+| TCN v1（5 通道） | 3.345 | 7.223 | 10.945 | −4.2% / +2.4% / +5.4% |
+| **LSTM v2（14 通道）** | **2.846** | **6.265** | **9.425** | **+10.8% / +15.0% / +18.2%** |
+| TCN v2（14 通道） | 3.108 | 6.550 | 9.697 | +2.6% / +11.1% / +15.8% |
 
-The 14-channel input: PM2.5, PM10, AQI, `region_city_mean`, six meteorological channels, and hour /
-day-of-week sine-cosine. Sequence length 24, normalisation fitted on train only, any window with a
-missing channel dropped (no leakage). 15 epochs, up to 800k training samples, one A40.
+14 通道输入：PM2.5、PM10、AQI、`region_city_mean`、六路气象，以及小时/星期的正余弦编码。
+序列长度 24，归一化只在 train 拟合，窗口内任一通道缺失即丢弃（无泄漏）。15 轮，最多 80 万训练样本，单张 A40。
 
-1. **v2 roughly doubles v1's advantage**: LSTM goes from +6.8 / +7.1 / +7.7% to **+10.8 / +15.0 / +18.2%**.
-2. **LSTM v2 catches LightGBM at h = 1** (2.846 vs 2.839, a 0.007 difference) and narrows h = 3/6 from
-   ~12% / ~19% to ~4% / ~9%. The "deep learning lags" story was really a *feature information* story.
-3. **TCN loses to LSTM**, especially at h = 1 — mean pooling plus shallow convolution underuses the
-   very strong one-hour autocorrelation.
-4. It is still not selected: tied at h = 1, worse at h = 3/6, far more expensive to run.
+1. **v2 大致把 v1 的增益翻倍**：LSTM 从 +6.8 / +7.1 / +7.7% 提升到 **+10.8 / +15.0 / +18.2%**。
+2. **LSTM v2 在 h=1 追平 LightGBM**（2.846 vs 2.839，差 0.007），h=3/6 的差距从约 12% / 19% 收窄到约 4% / 9%。
+   所谓「深度学习落后」，本质是**特征信息量**的问题。
+3. **TCN 弱于 LSTM**，h=1 尤其明显——均值池化加浅层卷积对一小时强自相关利用不足。
+4. 但仍然不选它：h=1 打平、h=3/6 更差、代价高得多。
 
-**Jing-Jin-Ji neighbourhood ablation** (LightGBM, 500k training samples, 400 trees):
+**京津冀邻域消融**（LightGBM，50 万训练样本，400 棵树）：
 
-| h | with neighbourhood | without | MAE reduction |
+| h | 含邻域 | 不含 | MAE 降幅 |
 |---|---|---|---|
 | 1 | 2.800 | 2.868 | **2.37%** |
 | 3 | 5.925 | 6.294 | **5.86%** |
 | 6 | 8.366 | 9.003 | **7.08%** |
 
-The longer the lead, the more spatial context is worth.
+跨度越长，空间上下文越值钱。
 
-### 6.11 A live forecast, published before verification
+### 6.11 一次先发布、后验证的实盘预报
 
-Not a backtest: the predictions were issued at **2026-10-31 23:00**, before the target hours existed,
-then reconciled against what actually happened.
+这不是回测：预测在 **2026-10-31 23:00** 发出，那时目标时刻尚未发生，之后与实际情况对账。
 
-| h | target hour | matched | MAE | B1 MAE | win rate | RMSE |
+| h | 目标时刻 | 可对账 | MAE | B1 MAE | 胜率 | RMSE |
 |---|---|---|---|---|---|---|
 | 1 | 10-31 23:00 | 35 | 1.91 | **1.71** | 31.4% | 2.42 |
 | 3 | 11-01 01:00 | 35 | **3.41** | 4.31 | 80.0% | 3.93 |
 | 6 | 11-01 04:00 | 35 | **4.34** | 4.37 | 57.1% | 5.13 |
 
-Overall 105 rows: MAE 3.22, mean bias **−2.59** (systematic under-prediction), worst single
-under-prediction −13.4 µg/m³.
+整体 105 条：MAE 3.22，平均偏差 **−2.59**（系统性低估），最大单条低估 −13.4 µg/m³。
 
-Three things that must be said out loud:
+三件必须如实说的事：
 
-1. **h = 1 lost to persistence** (1.91 vs 1.71, 31.4% win rate). Not a pipeline bug: over 400k samples
-   persistence at h = 1 averages 3.23 against the model's 2.78, but **for 35 stations at one instant,
-   one-hour persistence is brutally strong**.
-2. **Systematic −2.59 bias**, with the five worst errors all under-predictions — the same
-   regression-to-the-mean defect seen in §6.4, now visible in production. This is why sample weighting exists.
-3. **105 rows prove nothing.** One instant × 35 stations × 3 leads is statistically one sample. Its value
-   is that the end-to-end path produces checkable output — not that the model is good.
+1. **h=1 输给了持久性**（1.91 vs 1.71，胜率 31.4%）。不是管道出错：40 万样本口径下持久性在 h=1 是 3.23、
+   模型是 2.78；但**对某一时刻的 35 个站来说，一小时内的持久性强得离谱**。
+2. **系统性低估 −2.59**，误差最大的五条全是低估——§6.4 里的回归到均值缺陷，在生产环境里现身。
+   这也是样本加权存在的理由。
+3. **105 条不足以支撑任何结论。** 一个时点 × 35 站 × 3 跨度，统计上等同于 1 个样本。它的价值在于
+   证明端到端链路能产出可核对的结果，而不在于证明模型好坏。
 
-Sample of the reconciliation file (`data/predictions/verify_20261031_2300.csv`), h = 3:
+对账文件片段（`data/predictions/verify_20261031_2300.csv`），h = 3：
 
-| station | target | predicted | actual | B1 |
+| 站点 | 目标时刻 | 预测 | 实际 | B1 |
 |---|---|---|---|---|
 | 东城东四 | 2026-11-01 01:00 | 11.8 | 15.0 | 10.0 |
 | 丰台云岗 | 2026-11-01 01:00 | 14.5 | 18.0 | 14.0 |
@@ -636,86 +599,86 @@ Sample of the reconciliation file (`data/predictions/verify_20261031_2300.csv`),
 
 ---
 
-## 7. Demo application
+## 7. 演示系统
 
-FastAPI service hosting a single-page dashboard (Vue 3 via CDN, no build step).
+FastAPI 托管单页看板（Vue 3 走 CDN，无需构建）。
 
 ```bash
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-| Endpoint | Returns |
+| 端点 | 返回 |
 |---|---|
-| `GET /api/stations` | 35 modelled stations with coordinates |
-| `GET /api/overview` | coverage, missing rate, timeline completeness |
-| `GET /api/trend?station=&start=&end=` | multi-pollutant time series for one station |
-| `GET /api/replay?station=&h=&mode=` | prediction replay with a two-mode guard |
-| `GET /api/comparison` | v4 metrics, peak detection, feature importance, DL results |
+| `GET /api/stations` | 35 个建模站点及经纬度 |
+| `GET /api/overview` | 覆盖率、缺失率、时间轴完整度 |
+| `GET /api/trend?station=&start=&end=` | 单站多污染物时间序列 |
+| `GET /api/replay?station=&h=&mode=` | 预测回放（带双模式拦截） |
+| `GET /api/comparison` | v4 指标、峰值检出、特征重要度、DL 结果 |
 
-Dashboard tabs: **overview · station trend · forecast replay · model comparison · live forecast**.
+看板分区：**数据概览 · 站点趋势 · 预测回放 · 模型对比 · 实时预报**。
 
 ---
 
-## 8. Repository layout
+## 8. 仓库结构
 
 ```
-src/aircast/            protocol and metric definitions (importable package)
-scripts/                ingest → warehouse → index → features → train → evaluate → live predict
-  fetch_quotsoft.py     daily-file scraper with resume
-  fetch_meteo.py        ERA5 via Open-Meteo, quota-aware batching
-  extract_zips.py       official annual bundles (with ._ and 404-HTML filtering)
-  build_long.py         wide → long warehouse, source-trap handling
-  build_stations.py     station metadata + OSM geocoding (+ cache)
-  build_index.py        freeze protocol p1: rows, B1, B2, fingerprint
-  build_features.py     feature tables per lead time
+src/aircast/           协议与指标定义（可导入的包）
+scripts/               采集 → 数仓 → 索引 → 特征 → 训练 → 评价 → 实时预测
+  fetch_quotsoft.py    逐日文件抓取，支持断点续传
+  fetch_meteo.py       ERA5（经 Open-Meteo），按额度分批
+  extract_zips.py      官方年度包解压（过滤 ._ 与 404 HTML）
+  build_long.py        宽转长入库，含各类源端陷阱处理
+  build_stations.py    站点元数据 + OSM 地理编码（含缓存）
+  build_index.py       冻结协议 p1：样本行、B1、B2、指纹
+  build_features.py    各跨度特征表
   build_meteo_features.py / build_nb_features.py
-  train_lgbm.py         --seed --tag --weight --w-mid --w-heavy
-  train_dl.py / train_dl2.py   LSTM / TCN, 5-channel and 14-channel
-  evaluate.py           --run --split  (daily-block bootstrap, peak P/R/F1, bands)
+  train_lgbm.py        --seed --tag --weight --w-mid --w-heavy
+  train_dl.py / train_dl2.py   LSTM / TCN，5 通道与 14 通道
+  evaluate.py          --run --split（日块 bootstrap、峰值 P/R/F1、分档）
   experiment_ablation.py / experiment_weight.py / experiment_heavy.py
-  predict_live.py       live inference, self-checks against the frozen features
-  verify_index.py       recompute from raw cells, bypassing the builder
-  qc_report.py          quality metrics and gap ledger
-app/                    FastAPI service + static dashboard
-docs/figures/           README figures + the script that generates them
-data/experiments/       per-experiment metric CSVs (ablation, seeds, meteo, heavy)
-data/reports/           QC summary and gap ledgers
-data/predictions/       live forecast reconciliation
-核验依据/                data-sample verification records
-PROTOCOL.md             time contract, baselines, splits, fingerprint
-RESULTS.md              every experiment, including negative results
-DATA.md                 data dictionary, coverage, quality defects
-M5_深度学习结果.md        LSTM / TCN results and the neighbourhood ablation
-北京空气质量短期预测项目指导书.md / .pdf / .docx   full project specification
+  predict_live.py      实时推理，与冻结特征逐值自检
+  verify_index.py      绕过构建代码，直接由原始单元格复算
+  qc_report.py         质量指标与缺口台账
+app/                    FastAPI 服务 + 静态看板
+docs/figures/           README 配图及生成脚本
+data/experiments/       各实验指标 CSV（消融、种子、气象、重污染）
+data/reports/           质量汇总与缺口台账
+data/predictions/       实盘预报对账
+核验依据/                数据样本核验记录
+PROTOCOL.md             时间契约、基线、切分、指纹
+RESULTS.md              全部实验，包括否定性结果
+DATA.md                 数据字典、覆盖、质量缺陷
+M5_深度学习结果.md        LSTM / TCN 结果与邻域消融
+北京空气质量短期预测项目指导书.md / .pdf / .docx   完整项目指导书
 ```
 
-**Deliberately not committed** (see `.gitignore`): `data/raw` (9.4 GB), `data/warehouse` (232 MB),
-`data/features` (278 MB), `data/meta` (16 MB), `data/index` (19 MB), `data/manifests` (6.5 MB), the
-downloaded archives (3.2 GB), the training bundle, ~40 training logs, all `*.parquet` / `*.pt`, and one
-cluster-access helper script that contains an internal IP and a personal username.
+**有意不入库的内容**（见 `.gitignore`）：`data/raw`（9.4 GB）、`data/warehouse`（232 MB）、
+`data/features`（278 MB）、`data/meta`（16 MB）、`data/index`（19 MB）、`data/manifests`（6.5 MB）、
+下载的官方压缩包（3.2 GB）、训练产物包、约 40 个训练日志、所有 `*.parquet` / `*.pt`，
+以及一个含内网 IP 与个人用户名的集群连接脚本。
 
 ---
 
-## 9. Quickstart
+## 9. 快速开始
 
 ```bash
 python -m venv .venv
-source .venv/Scripts/activate      # Windows;  use .venv/bin/activate on Linux/macOS
+source .venv/Scripts/activate      # Windows；Linux/macOS 用 .venv/bin/activate
 pip install -r requirements.lock.txt
 export PYTHONPATH=src
 ```
 
-### Rebuild the data layer (needs network; ~10 GB download)
+### 重建数据层（需要网络，约 10 GB 下载）
 
 ```bash
 python scripts/fetch_quotsoft.py --dataset beijing_all   --start 20131206 --end 20261029 --workers 8
 python scripts/fetch_quotsoft.py --dataset beijing_extra --start 20140403 --end 20261029 --workers 8
 python scripts/fetch_quotsoft.py --dataset china_cities  --start 20140513 --end 20261029 --workers 6
 python scripts/fetch_meteo.py    --start 20131201 --end 20261029 --workers 1
-python scripts/extract_zips.py   --kind china_sites        # needs the official bundles locally
+python scripts/extract_zips.py   --kind china_sites        # 需先把官方年包放好
 ```
 
-### Build the warehouse, freeze the index, train, evaluate
+### 建数仓、冻结索引、训练、评价
 
 ```bash
 python scripts/build_long.py --source beijing_all
@@ -726,8 +689,8 @@ python scripts/build_stations.py
 python scripts/build_meteo.py
 python scripts/qc_report.py
 
-python scripts/build_index.py                 # freeze protocol p1 + fingerprint
-python scripts/verify_index.py                # hand-check against raw cells
+python scripts/build_index.py                 # 冻结协议 p1 并生成指纹
+python scripts/verify_index.py                # 与原始单元格手算对账
 python scripts/build_features.py
 python scripts/build_meteo_features.py
 python scripts/build_nb_features.py
@@ -736,19 +699,18 @@ python scripts/train_lgbm.py --seed 42 --tag v4 --weight --w-mid 3 --w-heavy 10
 python scripts/evaluate.py --run data/runs/<run_id> --split test
 ```
 
-### Live inference and serving
+### 实时推理与服务
 
 ```bash
 python scripts/predict_live.py --time "2026-10-31 23:00"
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-`predict_live.py` deliberately does **not** touch the frozen index — rebuilding it just to predict a new
-hour would change the fingerprint and invalidate every existing experiment. Instead it recomputes
-features from the warehouse and **asserts cell-by-cell agreement with the frozen feature table** on
-overlapping timestamps, aborting if the two paths have diverged.
+`predict_live.py` 刻意**不碰**冻结索引——为了预测一个新时点去重建索引会改变指纹，
+让所有既有实验失效。它改为由数仓重算特征，并对重叠时点**逐值与冻结特征表断言一致**，
+两条路径一旦分叉就直接终止。
 
-### Regenerate the figures
+### 重新生成配图
 
 ```bash
 python -m pip install --target .tmp_pylibs matplotlib
@@ -757,60 +719,54 @@ PYTHONPATH=.tmp_pylibs python docs/figures/make_figures.py
 
 ---
 
-## 10. Limitations
+## 10. 已知限制
 
-- **Reanalysis, not forecast.** The headline +25.91% at h = 6 assumes near-perfect target-hour weather.
-  The honestly deliverable number is **+18.13%** (only information available at issue time). Swapping
-  ERA5 for Open-Meteo's historical *forecast* archive is the next step, and it will lower the headline.
-- **Heavy pollution remains the weak spot.** Weighting fixes the systematic under-prediction but does not
-  make the model equal to persistence on extreme episodes at long leads.
-- **Spark / Hadoop is designed, not executed.** The pipeline is single-node pandas + LightGBM. The
-  distributed version is future work and is not claimed as done.
-- **Some coordinates are approximate** — 23 municipal stations rely on OSM geocoding, validated only
-  against the 12 official ones.
-- **One city, one pollutant family.** Do not extrapolate to another region without re-validating the
-  neighbourhood features.
-- **The A40 experiments are not reproducible on a laptop** — LSTM/TCN training needs the GPU host; only
-  their metrics and configs are recorded here.
-- **No license yet** (course project). Ask before reuse.
+- **用的是再分析，不是预报。** h=6 的 +25.91% 假设目标小时气象近乎完美。诚实的可交付数字是
+  **+18.13%**（只用发布时确实拿得到的信息）。下一步换成 Open-Meteo 的历史**预报**场，届时头部数字会下降。
+- **重污染仍是短板。** 加权修正了系统性低估，但没有让长跨度上的极端过程追平持久性。
+- **Spark / Hadoop 已设计，未执行。** 当前是单机 pandas + LightGBM，分布式版本属未来工作，不声称完成。
+- **部分坐标是近似的**——23 个市级站依赖 OSM 地理编码，只与 12 个官方站交叉校验过。
+- **一个城市、一类污染物。** 未经重新验证不要外推到其他区域。
+- **A40 上的实验无法在笔记本复现**——LSTM/TCN 训练需要 GPU 主机，这里只保留指标与配置。
+- **暂无开源许可**（课程项目），复用前请先联系。
 
 ---
 
-## 11. Roadmap
+## 11. 路线图
 
-| Status | Item |
+| 状态 | 事项 |
 |---|---|
-| done | sample weighting for heavy episodes |
-| done | three-lead feature ablation |
-| done | graph features + v3 baseline + seed stability |
-| rejected | dual-model peak warning (single model + threshold dominates) |
-| done | ERA5 meteorology, leakage trap fixed, weight × meteorology cross experiment |
-| done | LSTM / TCN evaluation |
-| next | historical **forecast** fields instead of reanalysis — turn the upper bound into a deliverable |
-| next | upwind-weighted `nb_*` features using ERA5 wind direction (currently undirected distance) |
-| next | v4 re-run against a fresh live forecast to see whether h = 1 can be won |
-| next | Spark ML migration once cluster access is settled |
-| optional | Kafka + Structured Streaming for true streaming inference |
+| 已完成 | 针对重污染低估的样本加权 |
+| 已完成 | 三跨度特征消融 |
+| 已完成 | 图特征 + v3 基准 + 种子稳定性 |
+| 已否决 | 双模型峰值预警（单模型调阈值更优） |
+| 已完成 | ERA5 气象接入、泄漏陷阱修复、权重 × 气象交叉实验 |
+| 已完成 | LSTM / TCN 评估 |
+| 下一步 | 用历史**预报**场替代再分析，把上限换成可交付口径 |
+| 下一步 | 接 ERA5 风向，把无向距离加权的 `nb_*` 改为上风向加权 |
+| 下一步 | v4 再发一次实盘，看 h=1 能否翻盘 |
+| 下一步 | 集群就绪后迁移 Spark ML |
+| 可选 | Kafka + Structured Streaming 做真流式推理 |
 
 ---
 
-## 12. Documentation
+## 12. 文档索引
 
-Chinese-language documents are the primary record and are kept in sync with this README:
+中文文档是主记录，与本 README 保持同步：
 
-| Document | Contents |
+| 文档 | 内容 |
 |---|---|
-| [`PROTOCOL.md`](PROTOCOL.md) | time contract, baselines, splits, index schema, hand-check |
-| [`RESULTS.md`](RESULTS.md) | every experiment and its numbers, including failures and open questions |
-| [`DATA.md`](DATA.md) | data dictionary, coverage, quality report, the nine traps |
-| [`M5_深度学习结果.md`](M5_深度学习结果.md) | LSTM / TCN setup, results, neighbourhood ablation |
-| [`北京空气质量短期预测项目指导书.md`](北京空气质量短期预测项目指导书.md) | full project specification (PDF / Word alongside) |
-| [`阅读说明.md`](阅读说明.md) | how the three collaborators use these documents |
+| [`PROTOCOL.md`](PROTOCOL.md) | 时间契约、基线、切分、索引结构、手算对账 |
+| [`RESULTS.md`](RESULTS.md) | 全部实验与数字，包括失败与未解问题 |
+| [`DATA.md`](DATA.md) | 数据字典、覆盖、质量报告、九个坑 |
+| [`M5_深度学习结果.md`](M5_深度学习结果.md) | LSTM / TCN 设置、结果、邻域消融 |
+| [`北京空气质量短期预测项目指导书.md`](北京空气质量短期预测项目指导书.md) | 完整项目指导书（含 PDF / Word） |
+| [`阅读说明.md`](阅读说明.md) | 三位协作者如何使用这些文档 |
 
 <div align="center">
 
 ---
 
-Built with real data, a frozen protocol, and an unusual willingness to publish the numbers that lost.
+用真实数据、冻结的协议，以及一种不太常见的意愿建成：把输掉的那些数字也公开。
 
 </div>
