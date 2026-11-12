@@ -1,0 +1,63 @@
+{
+  "date": "2026-11-10",
+  "scope": "high_PM25_priority_development_historical_replay",
+  "selected": "R1-40",
+  "status": "passed_development_and_one_time_historical_holdout",
+  "frozen_m1_fold": 2024,
+  "parent": "../run/round1.txt",
+  "parent_sha256": "124d97a51966e5700ccf0bec74042e7d9c4ad17c4d863fd8b4a7578b07cb7afe",
+  "weights": "run/R1-40.txt",
+  "weights_sha256": "2db462a2421318e9515b93069f016fa8929e028b90d2428d863d0926092cc849",
+  "scoring_threshold_ug_m3": 73,
+  "protocol_sha256": "2e60a2d00902e7a336756a7321b937eabdb9f01840e033af54ea4bfff3e11d75",
+  "stages": {
+    "validation": {
+      "bounds": [
+        "2026-04-01",
+        "2026-07-01"
+      ],
+      "sha256": "cebd7f565a2215b33c2b41a23189e37d161abbf906508b133534bdd8cf48e4bf",
+      "metrics": {
+        "mae": 11.650242245855274,
+        "high_mae": 24.63663527434747,
+        "ordinary_mae": 11.09300327393947,
+        "recall": 0.4106680476437079,
+        "precision": 0.4599767981438515,
+        "f1": 0.4339261285909713,
+        "false_positive_rate": 0.020583683395976122,
+        "false_positives_per_1000": 20.583683395976124,
+        "rows": 47161,
+        "high_rows": 1931,
+        "ordinary_rows": 45230,
+        "coverage": 1.0,
+        "new_rise_rows": 1274,
+        "new_rise_recall": 0.16875981161695447,
+        "late_mae": 14.909431425187444
+      }
+    },
+    "holdout": {
+      "bounds": [
+        "2026-07-01",
+        "2026-10-26"
+      ],
+      "sha256": "e56b72b6d8e86f52d45071c9c5e78a6a98971f1393dc479e215175b73a31a2f5",
+      "metrics": {
+        "mae": 8.795873445336303,
+        "high_mae": 14.769955966713392,
+        "ordinary_mae": 8.595930846405833,
+        "recall": 0.627677100494234,
+        "precision": 0.4607013301088271,
+        "f1": 0.5313807531380753,
+        "false_positive_rate": 0.022918807810894143,
+        "false_positives_per_1000": 22.91880781089414,
+        "rows": 60201,
+        "high_rows": 1821,
+        "ordinary_rows": 58380,
+        "coverage": 1.0,
+        "new_rise_rows": 1004,
+        "new_rise_recall": 0.35856573705179284,
+        "late_mae": 11.34676795608568
+      }
+    }
+  }
+}

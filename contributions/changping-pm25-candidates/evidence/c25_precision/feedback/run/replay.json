@@ -1,0 +1,37 @@
+{
+  "bounds": [
+    "2026-07-01",
+    "2026-10-26"
+  ],
+  "status": "reused_development",
+  "metrics": {
+    "parent": {
+      "precision": 0.44075829383886256,
+      "recall": 0.71499176276771,
+      "false_positive_rate": 0.028297362110311752,
+      "tp": 1302,
+      "fp": 1652
+    },
+    "feedback-same-count": {
+      "precision": 0.44177386594448204,
+      "recall": 0.7166392092257001,
+      "false_positive_rate": 0.028245974648852347,
+      "tp": 1305,
+      "fp": 1649
+    },
+    "feedback-adaptive": {
+      "precision": 0.4464585431352803,
+      "recall": 0.7303679297089511,
+      "false_positive_rate": 0.028245974648852347,
+      "tp": 1330,
+      "fp": 1649
+    }
+  },
+  "passes": {
+    "feedback-same-count": false,
+    "feedback-adaptive": false
+  },
+  "selected": null,
+  "parent_reproduced": true,
+  "future_perturbation_prefix_rows": 30480
+}
