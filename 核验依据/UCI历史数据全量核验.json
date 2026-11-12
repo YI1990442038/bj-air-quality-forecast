@@ -1,0 +1,196 @@
+{
+  "dataset": "Beijing Multi-Site Air Quality",
+  "verified_on": "2026-10-15",
+  "source": "https://archive.ics.uci.edu/dataset/501/beijing+multi+site+air+quality+data",
+  "download_url": "https://archive.ics.uci.edu/static/public/501/beijing+multi+site+air+quality+data.zip",
+  "license": "CC BY 4.0 (UCI dataset page)",
+  "bytes": 8192212,
+  "sha256": "b04da438b2f331ac0ffd45aebdfec0d20d2367feb5f6948c4b1f7ce1191e33c4",
+  "stations": [
+    {
+      "station": "Aotizhongxin",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 925,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Changping",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 774,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Dingling",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 779,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Dongsi",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 750,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Guanyuan",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 616,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Gucheng",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 646,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Huairou",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 953,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Nongzhanguan",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 628,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Shunyi",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 913,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Tiantan",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 677,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Wanliu",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 382,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    },
+    {
+      "station": "Wanshouxigong",
+      "rows": 35064,
+      "first": "2013-03-01T00:00:00",
+      "last": "2017-02-28T23:00:00",
+      "pm25_missing": 696,
+      "duplicate_keys": 0,
+      "time_axis_gaps": 0
+    }
+  ],
+  "columns": [
+    "No",
+    "year",
+    "month",
+    "day",
+    "hour",
+    "PM2.5",
+    "PM10",
+    "SO2",
+    "NO2",
+    "CO",
+    "O3",
+    "TEMP",
+    "PRES",
+    "DEWP",
+    "RAIN",
+    "wd",
+    "WSPM",
+    "station"
+  ],
+  "csv_count": 12,
+  "rows": 420768,
+  "missing_by_column": {
+    "SO2": 9021,
+    "CO": 20701,
+    "NO2": 12116,
+    "PM10": 6449,
+    "O3": 13277,
+    "PM2.5": 8739,
+    "wd": 1822,
+    "TEMP": 398,
+    "PRES": 393,
+    "DEWP": 403,
+    "RAIN": 390,
+    "WSPM": 318
+  },
+  "duplicate_station_hour_keys": 0,
+  "hour_axis_discontinuities": 0,
+  "data_files": [
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Aotizhongxin_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Changping_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Dingling_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Dongsi_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Guanyuan_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Gucheng_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Huairou_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Nongzhanguan_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Shunyi_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Tiantan_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Wanliu_20130301-20170228.csv",
+    "PRSA2017_Data_20130301-20170228.zip/PRSA_Data_20130301-20170228/PRSA_Data_Wanshouxigong_20130301-20170228.csv"
+  ],
+  "proof_scope": "File download, full parsing, schema/time/label checks, and independent simple-baseline calculation; not ML training or final project evaluation.",
+  "six_hour_target_definition": "At issue time T use observations strictly before T; predict PM2.5 for the hour T+5. No target-hour meteorology is used.",
+  "six_hour_complete_comparison_rows": {
+    "train": 284468,
+    "validation": 49608,
+    "test": 66515
+  },
+  "illustrative_baselines": {
+    "train": {
+      "persistence_mae_ug_m3": 33.110569202862905,
+      "persistence_rmse_ug_m3": 54.114306699828,
+      "previous_day_same_target_hour_mae_ug_m3": 59.217726071122264
+    },
+    "validation": {
+      "persistence_mae_ug_m3": 28.163320432188357,
+      "persistence_rmse_ug_m3": 52.880535093506005,
+      "previous_day_same_target_hour_mae_ug_m3": 48.40971214320271
+    },
+    "test": {
+      "persistence_mae_ug_m3": 34.17017214162219,
+      "persistence_rmse_ug_m3": 59.50558718651625,
+      "previous_day_same_target_hour_mae_ug_m3": 62.755709238517625
+    }
+  },
+  "proposed_ml_inputs": "Lagged pollutants and weather strictly before issue T, known calendar and station identity; no future observed weather; imputers fit on training only."
+}

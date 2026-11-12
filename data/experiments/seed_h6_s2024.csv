@@ -1,0 +1,2 @@
+h,set,n_feat,seed,MAE,gain_pct,ci_lo,ci_hi,heavy_MAE,heavy_gain,peak_F1,peak_R,best_iter
+6,full,39,2024,9.675,16.53,15.01,18.12,20.72,22.02,0.6535,0.6843,222

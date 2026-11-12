@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>北京 PM2.5 短期预测 · 演示系统</title>
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; color: #1f2329; }
+  #app { max-width: 1200px; margin: 0 auto; padding: 0 16px 48px; }
+  header { padding: 20px 0 12px; border-bottom: 1px solid #e5e8ec; }
+  header h1 { margin: 0; font-size: 20px; }
+  header .sub { color: #8a94a6; font-size: 13px; margin-top: 4px; }
+  nav { display: flex; gap: 8px; margin: 16px 0; flex-wrap: wrap; }
+  nav button { border: 1px solid #d0d5dd; background: #fff; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  nav button.active { background: #2f6fed; color: #fff; border-color: #2f6fed; }
+  .card { background: #fff; border: 1px solid #e5e8ec; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .card h3 { margin: 0 0 12px; font-size: 15px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  select, input { padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 14px; }
+  .chart { width: 100%; height: 420px; }
+  .kpi { display: flex; gap: 16px; flex-wrap: wrap; }
+  .kpi .box { background: #f0f4ff; border-radius: 10px; padding: 12px 18px; min-width: 120px; }
+  .kpi .box .v { font-size: 22px; font-weight: 700; color: #2f6fed; }
+  .kpi .box .l { font-size: 12px; color: #8a94a6; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { border: 1px solid #e5e8ec; padding: 6px 10px; text-align: center; }
+  th { background: #f5f7fa; }
+  .note { font-size: 12px; color: #b06a00; background: #fff7e6; border: 1px solid #ffe1a8; padding: 8px 12px; border-radius: 8px; margin-top: 8px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 12px; background: #e8f5e9; color: #2e7d32; }
+  .loading { color: #8a94a6; padding: 24px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>北京空气质量 PM2.5 短期预测 · 演示系统</h1>
+    <div class="sub">Hadoop/Spark 课程项目 · 数据 2021-02 ~ 2026-10 · 35 站 · 跨度 h=1/3/6 · LightGBM v4 + LSTM/TCN（v1/v2）· 京津冀邻域</div>
+  </header>
+
+  <nav>
+    <button :class="{active: tab==='overview'}" @click="switchTab('overview')">数据概览</button>
+    <button :class="{active: tab==='trend'}" @click="switchTab('trend')">站点趋势</button>
+    <button :class="{active: tab==='replay'}" @click="switchTab('replay')">预测回放</button>
+    <button :class="{active: tab==='compare'}" @click="switchTab('compare')">模型对比</button>
+    <button :class="{active: tab==='live'}" @click="switchTab('live')">实时预报</button>
+  </nav>
+
+  <!-- 数据概览 -->
+  <section v-show="tab==='overview'">
+    <div v-if="overview.date_min" class="kpi">
+      <div class="box"><div class="v">{{ overview.n_stations }}</div><div class="l">建模站点</div></div>
+      <div class="box"><div class="v">{{ overview.date_min.slice(0,10) }} ~ {{ overview.date_max.slice(0,10) }}</div><div class="l">覆盖区间</div></div>
+      <div class="box"><div class="v">{{ (overview.time_completeness*100).toFixed(1) }}%</div><div class="l">时间轴完整度</div></div>
+      <div class="box"><div class="v">{{ (overview.observed_hours/1e6).toFixed(2) }}M</div><div class="l">观测整点(era-B)</div></div>
+    </div>
+    <div class="card">
+      <h3>站点分布与观测完整度（经度-纬度示意）</h3>
+      <div id="overviewMap" class="chart"></div>
+      <div class="note">底图为合规示意：未引入来源不明的行政区边界 GeoJSON；正式上线请接入天地图 / 自然资源部标准地图底图。颜色越红表示该站观测完整度越低。</div>
+    </div>
+    <div class="card">
+      <h3>各站观测率</h3>
+      <div id="overviewBar" class="chart" style="height:520px"></div>
+    </div>
+  </section>
+
+  <!-- 站点趋势 -->
+  <section v-show="tab==='trend'">
+    <div class="card">
+      <div class="row">
+        <label>站点：
+          <select v-model="trendStation" @change="loadTrend">
+            <option v-for="s in stations" :key="s.name" :value="s.name">{{ s.name }}</option>
+          </select>
+        </label>
+        <label>起：<input type="date" v-model="trendStart" /></label>
+        <label>止：<input type="date" v-model="trendEnd" /></label>
+        <button @click="loadTrend">查询</button>
+      </div>
+      <div id="trendChart" class="chart"></div>
+    </div>
+  </section>
+
+  <!-- 预测回放 -->
+  <section v-show="tab==='replay'">
+    <div class="card">
+      <div class="row">
+        <label>站点：
+          <select v-model="replayStation" @change="loadReplay">
+            <option v-for="s in stations" :key="s.name" :value="s.name">{{ s.name }}</option>
+          </select>
+        </label>
+        <label>跨度 h：
+          <select v-model.number="replayH" @change="loadReplay">
+            <option :value="1">1 小时</option><option :value="3">3 小时</option><option :value="6">6 小时</option>
+          </select>
+        </label>
+        <label>模式：
+          <select v-model="replayMode" @change="loadReplay">
+            <option value="review">回顾全量(retrospective)</option>
+            <option value="historical_replay">实时回放(historical)</option>
+          </select>
+        </label>
+        <button @click="loadReplay">刷新</button>
+        <span class="tag">默认取最近 1500 期</span>
+      </div>
+      <div id="replayChart" class="chart"></div>
+      <div class="note">双模式信息拦截：historical_replay 仅返回目标时刻 ≤ 回放时刻的样本，服务端强制不泄露未来；retrospective 才允许查看完整成绩。</div>
+    </div>
+  </section>
+
+  <!-- 模型对比 -->
+  <section v-show="tab==='compare'">
+    <div class="card" v-if="comparison.lightgbm_v4">
+      <h3>LightGBM v4 主指标（test 段，含气象）</h3>
+      <table>
+        <thead><tr><th>h</th><th>样本数</th><th>MAE</th><th>RMSE</th><th>B1 MAE</th><th>相对 B1</th><th>胜率</th></tr></thead>
+        <tbody>
+          <tr v-for="m in comparison.lightgbm_v4.metrics.filter(x=>x.split==='test')" :key="m.h">
+            <td>{{ m.h }}</td><td>{{ m.n }}</td><td>{{ m.MAE.toFixed(3) }}</td><td>{{ m.RMSE.toFixed(3) }}</td>
+            <td>{{ m.B1_MAE.toFixed(3) }}</td><td>{{ m.vs_B1 }}</td><td>{{ (m.win_rate*100).toFixed(1) }}%</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="row" style="margin-top:12px">
+        <label>特征重要度(h)：
+          <select v-model.number="impH" @change="renderImportance">
+            <option :value="1">1</option><option :value="3">3</option><option :value="6">6</option>
+          </select>
+        </label>
+      </div>
+      <div id="impChart" class="chart" style="height:380px"></div>
+    </div>
+    <div class="card" v-if="comparison.dl && comparison.dl.length">
+      <h3>深度学习对比（v1 单通道 / v2 多通道时空）</h3>
+      <table>
+        <thead><tr><th>模型</th><th>h</th><th>split</th><th>MAE</th><th>B1 MAE</th><th>相对 B1</th></tr></thead>
+        <tbody>
+          <tr v-for="m in comparison.dl" :key="m.run_id+m.h">
+            <td>{{ m.label || m.run_id }}</td><td>{{ m.h }}</td><td>{{ m.split }}</td><td>{{ m.MAE.toFixed(3) }}</td>
+            <td>{{ m.B1_MAE.toFixed(3) }}</td><td>{{ m.vs_B1 }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div v-else class="card"><div class="loading">深度学习(M5)结果尚未生成，训练完成后将自动出现在此处。</div></div>
+  </section>
+
+  <!-- 实时预报 -->
+  <section v-show="tab==='live'">
+    <div class="card">
+      <h3>实时预报（最新发布时点，逐站 h=1/3/6）</h3>
+      <div v-if="live.available">
+        <div class="kpi">
+          <div class="box"><div class="v">{{ live.issue_time.slice(0,16) }}</div><div class="l">发布时点(北京)</div></div>
+          <div class="box"><div class="v">{{ live.targets['1'] ? live.targets['1'].slice(5,16) : '-' }}</div><div class="l">h=1 目标时刻</div></div>
+          <div class="box"><div class="v">{{ live.targets['6'] ? live.targets['6'].slice(5,16) : '-' }}</div><div class="l">h=6 目标时刻</div></div>
+          <div class="box"><div class="v">{{ live.rows.length }}</div><div class="l">预报站点数</div></div>
+        </div>
+        <table style="margin-top:14px">
+          <thead><tr><th>站点</th><th>h=1 PM2.5</th><th>h=3 PM2.5</th><th>h=6 PM2.5</th></tr></thead>
+          <tbody>
+            <tr v-for="r in live.rows" :key="r.station">
+              <td>{{ r.station }}</td><td>{{ r.h1 }}</td><td>{{ r.h3 }}</td><td>{{ r.h6 }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="note">由 LightGBM v4 模型对最新时点逐站发布 h=1/3/6 小时 PM2.5 预报；数据来自 scripts/predict_live.py 实时链路（不依赖冻结索引，可每小时调度 ≈ 流式在线预测）。来源文件 {{ live.file }}。</div>
+      </div>
+      <div v-else class="loading">暂无实时预报结果（运行 scripts/predict_live.py 生成 live_*.parquet）。</div>
+    </div>
+  </section>
+</div>
+
+<script>
+const { createApp, ref, onMounted, nextTick } = Vue;
+const charts = {};
+
+function initChart(id) {
+  if (charts[id]) { charts[id].dispose(); }
+  charts[id] = echarts.init(document.getElementById(id));
+  return charts[id];
+}
+const fmt = (a) => a.map(x => x == null ? null : +x.toFixed(2));
+
+createApp({
+  setup() {
+    const tab = ref('overview');
+    const stations = ref([]);
+    const overview = ref({});
+    const trendStation = ref('东城东四');
+    const trendStart = ref('2026-10-01');
+    const trendEnd = ref('2026-10-31');
+    const replayStation = ref('东城东四');
+    const replayH = ref(6);
+    const replayMode = ref('review');
+    const comparison = ref({});
+    const impH = ref(6);
+    const live = ref({});
+
+    async function getJSON(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    async function loadStations() {
+      const d = await getJSON('/api/stations');
+      stations.value = d.stations;
+    }
+    async function loadOverview() {
+      overview.value = await getJSON('/api/overview');
+      await nextTick();
+      renderOverview();
+    }
+    function renderOverview() {
+      const ov = overview.value;
+      const c = initChart('overviewMap');
+      const data = ov.per_station.map(p => {
+        const st = stations.value.find(s => s.name === p.station);
+        return { name: p.station, value: [st ? st.lon : 116.4, st ? st.lat : 39.9, 1 - p.obs_rate] };
+      });
+      c.setOption({
+        tooltip: { formatter: p => `${p.data.name}<br/>缺失率: ${(p.data.value[2]*100).toFixed(1)}%` },
+        visualMap: { min: 0, max: 0.25, dimension: 2, inRange: { color: ['#2e7d32','#fdd835','#c62828'] }, text:['低缺失','高缺失'], left: 'left', bottom: 10 },
+        xAxis: { type:'value', min:115.8, max:117.3, name:'经度' },
+        yAxis: { type:'value', min:39.4, max:41.2, name:'纬度' },
+        series: [{ type:'scatter', data, symbolSize: 12, label:{show:true, formatter:p=>p.data.name, fontSize:9, position:'right'} }]
+      });
+      const b = initChart('overviewBar');
+      const sorted = [...ov.per_station].sort((a,b)=>a.obs_rate-b.obs_rate);
+      b.setOption({
+        grid:{left:120,right:30},
+        tooltip:{},
+        xAxis:{ type:'value', max:1, axisLabel:{ formatter: v=>(v*100)+'%' } },
+        yAxis:{ type:'category', data: sorted.map(p=>p.station), inverse:true },
+        series:[{ type:'bar', data: sorted.map(p=>p.obs_rate), itemStyle:{ color:'#2f6fed' }, label:{show:true, position:'right', formatter:p=>(p.value*100).toFixed(1)+'%'} }]
+      });
+    }
+    async function loadTrend() {
+      const d = await getJSON(`/api/trend?station=${encodeURIComponent(trendStation.value)}&start=${trendStart.value}&end=${trendEnd.value}`);
+      await nextTick();
+      const c = initChart('trendChart');
+      c.setOption({
+        tooltip:{ trigger:'axis' },
+        legend:{ data:['PM2.5','PM10','AQI'] },
+        xAxis:{ type:'category', data: d.times.map(t=>t.slice(5,16)) },
+        yAxis:{ type:'value' },
+        dataZoom:[{type:'slider'},{type:'inside'}],
+        series:[
+          { name:'PM2.5', type:'line', showSymbol:false, data: fmt(d.pm25), connectNulls:false },
+          { name:'PM10', type:'line', showSymbol:false, data: fmt(d.pm10), connectNulls:false },
+          { name:'AQI', type:'line', showSymbol:false, data: fmt(d.aqi), connectNulls:false }
+        ]
+      });
+    }
+    async function loadReplay() {
+      const d = await getJSON(`/api/replay?station=${encodeURIComponent(replayStation.value)}&h=${replayH.value}&mode=${replayMode.value}`);
+      await nextTick();
+      const c = initChart('replayChart');
+      c.setOption({
+        tooltip:{ trigger:'axis' },
+        legend:{ data:['预测(y_pred)','真值(y_true)','基线B1'] },
+        xAxis:{ type:'category', data: d.issue_times.map(t=>t.slice(5,16)) },
+        yAxis:{ type:'value', name:'PM2.5 μg/m³' },
+        dataZoom:[{type:'slider'},{type:'inside'}],
+        series:[
+          { name:'真值(y_true)', type:'line', showSymbol:false, data: fmt(d.y_true) },
+          { name:'预测(y_pred)', type:'line', showSymbol:false, data: fmt(d.y_pred), lineStyle:{width:2}, itemStyle:{color:'#2f6fed'} },
+          { name:'基线B1', type:'line', showSymbol:false, data: fmt(d.b1), lineStyle:{type:'dashed'} }
+        ]
+      });
+    }
+    async function loadComparison() {
+      comparison.value = await getJSON('/api/comparison');
+      await nextTick();
+      renderImportance();
+    }
+    function renderImportance() {
+      const imp = comparison.value.lightgbm_v4 && comparison.value.lightgbm_v4.importance[String(impH.value)];
+      if (!imp) return;
+      const c = initChart('impChart');
+      c.setOption({
+        grid:{left:160,right:40},
+        tooltip:{},
+        xAxis:{ type:'value' },
+        yAxis:{ type:'category', data: imp.map(i=>i.name).reverse() },
+        series:[{ type:'bar', data: imp.map(i=>i.value).reverse(), itemStyle:{color:'#7e57c2'}, label:{show:true,position:'right'} }]
+      });
+    }
+
+    async function loadLive() {
+      live.value = await getJSON('/api/live');
+    }
+
+    function switchTab(t) {
+      tab.value = t;
+      nextTick(() => {
+        if (t === 'overview') renderOverview();
+        if (t === 'trend') loadTrend();
+        if (t === 'replay') loadReplay();
+        if (t === 'compare') loadComparison();
+        if (t === 'live') loadLive();
+      });
+    }
+
+    onMounted(async () => {
+      await loadStations();
+      await loadOverview();
+    });
+
+    return { tab, stations, overview, trendStation, trendStart, trendEnd, replayStation, replayH, replayMode,
+             comparison, impH, live, switchTab, loadTrend, loadReplay };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
